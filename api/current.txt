@@ -14383,6 +14383,7 @@ package java.util {
   }
 
   public final class ServiceLoader<S> implements java.lang.Iterable<S> {
+    method public java.util.Optional<S> findFirst();
     method public java.util.Iterator<S> iterator();
     method public static <S> java.util.ServiceLoader<S> load(Class<S>, ClassLoader);
     method public static <S> java.util.ServiceLoader<S> load(Class<S>);
@@ -18160,6 +18161,16 @@ package java.util.zip {
     field public static final int LOCTIM = 10; // 0xa
     field public static final int LOCVER = 4; // 0x4
     field public static final int STORED = 0; // 0x0
+  }
+
+}
+
+package javax.annotation.processing {
+
+  @java.lang.annotation.Documented @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.SOURCE) @java.lang.annotation.Target({java.lang.annotation.ElementType.PACKAGE, java.lang.annotation.ElementType.TYPE, java.lang.annotation.ElementType.METHOD, java.lang.annotation.ElementType.CONSTRUCTOR, java.lang.annotation.ElementType.FIELD, java.lang.annotation.ElementType.LOCAL_VARIABLE, java.lang.annotation.ElementType.PARAMETER}) public @interface Generated {
+    method public abstract String comments() default "";
+    method public abstract String date() default "";
+    method public abstract String[] value();
   }
 
 }
