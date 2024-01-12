@@ -3573,16 +3573,8 @@ assertEquals("XY", (String) f2.invokeExact("x", "y")); // XY
         //     adapter = filterArgument(adapter, pos + i, filter);
         // }
         // return adapter;
-        boolean hasNonNullFilter = false;
         for (int i = 0; i < filters.length; ++i) {
-            MethodHandle filter = filters[i];
-            if (filter != null) {
-                hasNonNullFilter = true;
-                filterArgumentChecks(target, i + pos, filter);
-            }
-        }
-        if (!hasNonNullFilter) {
-            return target;
+            filterArgumentChecks(target, i + pos, filters[i]);
         }
         return new Transformers.FilterArguments(target, pos, filters);
     }

@@ -1576,13 +1576,7 @@ public class Transformers {
         private static MethodType deriveType(MethodHandle target, int pos, MethodHandle[] filters) {
             final Class<?>[] filterArgs = new Class<?>[filters.length];
             for (int i = 0; i < filters.length; ++i) {
-                MethodHandle filter = filters[i];
-                if (filter != null) {
-                    filterArgs[i] = filter.type().parameterType(0);
-                } else {
-                    // null filters are treated as identity functions.
-                    filterArgs[i] = target.type().parameterType(i);
-                }
+                filterArgs[i] = filters[i].type().parameterType(0);
             }
 
             return target.type().replaceParameterTypes(pos, pos + filters.length, filterArgs);
