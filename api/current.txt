@@ -4789,6 +4789,7 @@ package java.lang.invoke {
     method public final native void setVolatile(java.lang.Object...);
     method public static void storeStoreFence();
     method public final java.lang.invoke.MethodHandle toMethodHandle(java.lang.invoke.VarHandle.AccessMode);
+    method @FlaggedApi("com.android.libcore.v_apis") public final String toString();
     method public final Class<?> varType();
     method public final native boolean weakCompareAndSet(java.lang.Object...);
     method public final native boolean weakCompareAndSetAcquire(java.lang.Object...);
@@ -16200,8 +16201,8 @@ package java.util.concurrent {
     method public static java.util.concurrent.ThreadLocalRandom current();
     method public double nextDouble(double);
     method public double nextDouble(double, double);
-    method public float nextFloat(float);
-    method public float nextFloat(float, float);
+    method @FlaggedApi("com.android.libcore.v_apis") public float nextFloat(float);
+    method @FlaggedApi("com.android.libcore.v_apis") public float nextFloat(float, float);
     method public int nextInt(int, int);
     method public long nextLong(long);
     method public long nextLong(long, long);
