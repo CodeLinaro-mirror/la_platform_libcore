@@ -23,7 +23,6 @@
  * questions.
  */
 package jdk.internal.access;
-
 import jdk.internal.misc.Unsafe;
 import java.io.ObjectInputStream;
 import java.io.FileDescriptor;
@@ -46,7 +45,7 @@ public class SharedSecrets {
     private static JavaBeansAccess javaBeansAccess;
     */
     // END Android-removed: Pruned unused access interfaces.
-    private static final JavaLangAccess javaLangAccess = new JavaLangAccess();
+    private static JavaLangAccess javaLangAccess;
     // BEGIN Android-removed: Pruned unused access interfaces.
     /*
     private static JavaLangInvokeAccess javaLangInvokeAccess;
@@ -116,11 +115,11 @@ public class SharedSecrets {
     public static void setJavaUtilJarAccess(JavaUtilJarAccess access) {
         javaUtilJarAccess = access;
     }
+    */
+    // END Android-removed: Pruned unused access interfaces.
     public static void setJavaLangAccess(JavaLangAccess jla) {
         javaLangAccess = jla;
     }
-    */
-    // END Android-removed: Pruned unused access interfaces.
     public static JavaLangAccess getJavaLangAccess() {
         return javaLangAccess;
     }
