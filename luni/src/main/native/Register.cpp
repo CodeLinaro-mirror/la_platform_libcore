@@ -36,7 +36,6 @@ jint JNI_OnLoad(JavaVM* vm, void*) {
 
 #define REGISTER(FN) extern void FN(JNIEnv*); FN(env)
     REGISTER(register_android_system_OsConstantsHolder);
-    //    REGISTER(register_java_lang_StringToReal);
     REGISTER(register_java_lang_invoke_MethodHandle);
     REGISTER(register_java_lang_invoke_VarHandle);
     REGISTER(register_libcore_icu_ICU);
@@ -46,7 +45,6 @@ jint JNI_OnLoad(JavaVM* vm, void*) {
     REGISTER(register_libcore_math_NativeBN);
     REGISTER(register_libcore_util_NativeAllocationRegistry);
     REGISTER(register_org_apache_harmony_xml_ExpatParser);
-    REGISTER(register_sun_misc_Unsafe);
 #undef REGISTER
 
     JniConstants::Initialize(env);

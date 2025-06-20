@@ -237,7 +237,6 @@ java_library {
         // framework-metalava-annotations contain annotations output by Metalava
         // in stubs, e.g. @android.annotation.Nullable.
         ":framework-metalava-annotations",
-        ":openjdk_lambda_stub_files",
         ":app-compat-annotations-source",
 
         // Use the okhttp source too to allow libcore code to reference it
@@ -1165,6 +1164,21 @@ java_aconfig_library {
         "com.android.art.debug",
     ],
     visibility: [
+        "//libcore:__subpackages__",
+    ],
+}
+
+cc_aconfig_library {
+    name: "libcore-aconfig-flags-native-lib",
+    aconfig_declarations: "libcore-aconfig-flags",
+    host_supported: true,
+    min_sdk_version: "31",
+    apex_available: [
+        "//apex_available:platform",
+        "//apex_available:anyapex",
+    ],
+    visibility: [
+        "//art:__subpackages__",
         "//libcore:__subpackages__",
     ],
 }
