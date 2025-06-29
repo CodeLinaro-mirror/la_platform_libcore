@@ -76,6 +76,7 @@ import jdk.internal.misc.VM;
 import jdk.internal.ref.CleanerFactory;
 import jdk.internal.vm.annotation.Stable;
 import sun.misc.Cleaner;
+import sun.nio.ch.FileChannelImpl;
 import sun.nio.fs.DefaultFileSystemProvider;
 import sun.security.action.GetPropertyAction;
 import sun.security.util.SignatureFileVerifier;
@@ -1852,7 +1853,10 @@ public class ZipFile implements ZipConstants, Closeable {
                 //     zerror("read CEN tables failed");
                 // }
                 cenlen = (int) (end.cenlen + ENDHDR);
-                DirectByteBuffer cenBuf = this.cen = (DirectByteBuffer) zfile.getChannel()
+                FileChannelImpl channel = (FileChannelImpl) zfile.getChannel();
+                // http://b/425897917. Reading CEN of ZipFile is uninterruptible.
+                channel.setUninterruptible();
+                DirectByteBuffer cenBuf = this.cen = (DirectByteBuffer) channel
                         .map(MapMode.READ_ONLY, cenpos, cenlen);
                 cenBuf.order(ByteOrder.LITTLE_ENDIAN);
                 cen = new byte[cenlen];
