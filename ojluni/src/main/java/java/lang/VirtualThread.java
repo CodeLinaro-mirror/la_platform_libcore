@@ -61,11 +61,15 @@ import sun.nio.ch.Interruptible;
 import sun.security.action.GetPropertyAction;
 import static java.util.concurrent.TimeUnit.*;
 
+import dalvik.system.VirtualThreadContext;
+
 /**
  * A thread that is scheduled by the Java virtual machine rather than the operating
  * system.
+ *
+ * @hide
  */
-final class VirtualThread extends BaseVirtualThread {
+public final class VirtualThread extends BaseVirtualThread {
     private static final Unsafe U = Unsafe.getUnsafe();
     private static final ContinuationScope VTHREAD_SCOPE = new ContinuationScope("VirtualThreads");
     private static final ForkJoinPool DEFAULT_SCHEDULER = createDefaultScheduler();
@@ -80,6 +84,10 @@ final class VirtualThread extends BaseVirtualThread {
 
     // scheduler and continuation
     private final Executor scheduler;
+    // Android note: This represents the continuation of a Virtual Thread, while the parent class
+    // java.lang.Thread has the same instance field `cont` representing the continuation of
+    // a carrier thread. It means this.cont != Thread.this.cont, and Thread.this.cont == null
+    // This confusion is inherited from the upstream OpenJDK.
     private final Continuation cont;
     private final Runnable runContinuation;
 
@@ -152,6 +160,10 @@ final class VirtualThread extends BaseVirtualThread {
      */
     private final Object interruptLock = new Object();
 
+    // Android-added: Extra field needed for internal testing.
+    // It can be removed once the events are emitted in JVMTI.
+    private JvmtiEventsListener mJvmtiEventsListener;
+
     /**
      * Returns the continuation scope used for virtual threads.
      */
@@ -214,14 +226,19 @@ final class VirtualThread extends BaseVirtualThread {
             }
             */
         }
-        private static Runnable wrap(VirtualThread vthread, Runnable task) {
-            return new Runnable() {
+        private static VirtualThreadContext wrap(VirtualThread vthread, Runnable task) {
+            return new VirtualThreadContext(new Runnable() {
                 @Hidden
                 public void run() {
                     vthread.run(task);
                 }
-            };
+            }, vthread.threadId());
         }
+    }
+
+    @Override
+    public VirtualThreadContext getVirtualThreadContext() {
+        return cont.getVirtualThreadContext();
     }
 
     /**
@@ -1138,25 +1155,64 @@ final class VirtualThread extends BaseVirtualThread {
 
     // -- JVM TI support --
 
-    @IntrinsicCandidate
-    @JvmtiMountTransition
-    private native void notifyJvmtiStart();
+    // BEGIN Android-changed: Add an event listener for internal testing.
+    // TODO: This java-level listener can be removed when JVMTI is supported.
+    public interface JvmtiEventsListener {
+        default void onJvmtiStart() {}
+        default void onJvmtiEnd() {}
+        default void onJvmtiMount(boolean hide) {}
+        default void onJvmtiUnmount(boolean hide) {}
+        default void onJvmtiHideFrames(boolean hide) {}
+    }
+
+    public JvmtiEventsListener getJvmtiEventListener() {
+        return mJvmtiEventsListener;
+    }
+
+    public void setJvmtiEventListener(JvmtiEventsListener listener) {
+        this.mJvmtiEventsListener = listener;
+    }
 
     @IntrinsicCandidate
     @JvmtiMountTransition
-    private native void notifyJvmtiEnd();
+    private void notifyJvmtiStart() {
+        if (mJvmtiEventsListener != null) {
+            mJvmtiEventsListener.onJvmtiStart();
+        }
+    }
 
     @IntrinsicCandidate
     @JvmtiMountTransition
-    private native void notifyJvmtiMount(boolean hide);
+    private void notifyJvmtiEnd() {
+        if (mJvmtiEventsListener != null) {
+            mJvmtiEventsListener.onJvmtiEnd();
+        }
+    }
 
     @IntrinsicCandidate
     @JvmtiMountTransition
-    private native void notifyJvmtiUnmount(boolean hide);
+    private void notifyJvmtiMount(boolean hide) {
+        if (mJvmtiEventsListener != null) {
+            mJvmtiEventsListener.onJvmtiMount(hide);
+        }
+    }
 
     @IntrinsicCandidate
     @JvmtiMountTransition
-    private native void notifyJvmtiHideFrames(boolean hide);
+    private void notifyJvmtiUnmount(boolean hide) {
+        if (mJvmtiEventsListener != null) {
+            mJvmtiEventsListener.onJvmtiUnmount(hide);
+        }
+    }
+
+    @IntrinsicCandidate
+    @JvmtiMountTransition
+    private void notifyJvmtiHideFrames(boolean hide) {
+        if (mJvmtiEventsListener != null) {
+            mJvmtiEventsListener.onJvmtiHideFrames(hide);
+        }
+    }
+    // END Android-changed: Add a JVMTI event listener for internal testing.
 
     // Android-removed: Removed unused methods.
     /*

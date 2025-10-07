@@ -255,11 +255,9 @@ public class Executors {
      * @throws NullPointerException if threadFactory is null
      * @since 21
      */
-    // Android-removed: ThreadPerTaskExecutor not available.
-    // TODO(b/346542404): Re-enable this API when VirtualThread is available
-    // public static ExecutorService newThreadPerTaskExecutor(ThreadFactory threadFactory) {
-    //     return ThreadPerTaskExecutor.create(threadFactory);
-    // }
+    public static ExecutorService newThreadPerTaskExecutor(ThreadFactory threadFactory) {
+        return ThreadPerTaskExecutor.create(threadFactory);
+    }
 
     /**
      * Creates an Executor that starts a new virtual Thread for each task.
@@ -272,12 +270,10 @@ public class Executors {
      * @return a new executor that creates a new virtual Thread for each task
      * @since 21
      */
-    // Android-removed: Virtual threads not available.
-    // TODO(b/346542404): Re-enable this API when VirtualThread is available
-    // public static ExecutorService newVirtualThreadPerTaskExecutor() {
-    //     ThreadFactory factory = Thread.ofVirtual().factory();
-    //     return newThreadPerTaskExecutor(factory);
-    // }
+    public static ExecutorService newVirtualThreadPerTaskExecutor() {
+        ThreadFactory factory = Thread.ofVirtual().factory();
+        return newThreadPerTaskExecutor(factory);
+    }
 
     /**
      * Creates a single-threaded executor that can schedule commands

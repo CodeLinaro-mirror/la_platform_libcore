@@ -36,6 +36,7 @@ import java.lang.reflect.Field;
 import java.security.AccessController;
 import java.security.AccessControlContext;
 import java.security.PrivilegedAction;
+import java.time.Duration;
 import java.util.Map;
 import java.util.HashMap;
 import java.util.Objects;
@@ -45,6 +46,7 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 
+import jdk.internal.event.ThreadSleepEvent;
 import jdk.internal.misc.TerminatingThreadLocal;
 import jdk.internal.misc.Unsafe;
 import jdk.internal.reflect.CallerSensitive;
@@ -52,6 +54,7 @@ import jdk.internal.reflect.Reflection;
 import jdk.internal.vm.annotation.ForceInline;
 import jdk.internal.vm.annotation.Hidden;
 import jdk.internal.vm.annotation.IntrinsicCandidate;
+import jdk.internal.vm.Continuation;
 import jdk.internal.vm.StackableScope;
 import jdk.internal.vm.ThreadContainer;
 import jdk.internal.vm.annotation.Stable;
@@ -67,6 +70,7 @@ import dalvik.system.VMStack;
 
 import libcore.util.EmptyArray;
 
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
 
 import android.compat.Compatibility;
@@ -193,20 +197,28 @@ public class Thread implements Runnable {
 
     private volatile String name;
 
-    // Android-changed: Cache Posix niceness instead of managed thread priority.
-    // Set before we actually change the priority. Thus the thread itself can restore the OS
-    // priority without synchronization by
-    //  1. reading niceness
+    // Android-changed: Cache Posix niceness in addition to Java thread priority.
+    // The setpriority() call sets both. We have Android-specific means to set the latter.
+    // They differ in two ways:
+    //  1. They use a different scale: 19 .. -20 vs 1 .. 10. Not all Linux niceness values can
+    //    be set via setPriority().
+    //  2. Priority values are inherited by child threads. Niceness values are reset as implied
+    //    by the current priority value in Java-created children.
+    // Whenever we set the actual OS-level priority. it is set to the current niceness value.
+    // The thread itself can restore the OS priority without synchronization by
+    //  1. reading niceness.
     //  2. Calling Posix setpriority on the result
     //  3. re-reading niceness and repeating if it changed in the interim.
     //  If niceness was changed by another thread before the last step, we restore that value.
     //  If it is changed after that, the Java.setPriority() call will do the right thing.
-    // For this to work, we need to ensure, among other things, that a setpriority call and a
-    // subsequent read of niceness are not reordered. Such guarantees are generally unclear; we
+    // For this to work, we need to ensure, among other things, that a Posix setpriority call and
+    // a subsequent read of niceness are not reordered. Such guarantees are generally unclear; we
     // assume that consistently treating niceness as Java `volatile` / C++ `seq_cst` suffices.
     private volatile int niceness;
 
     private int priority;  // Only for reading via reflection and for unstarted threads. Avoid.
+                           // Once there is no need for reflective access, and we no longer need
+                           // S compatibility, remove.
 
     // cachedPriorityForNiceness[n + PFN_INDEX_OFFSET] = 0 or Java priority for niceness n.
     private static final byte[] cachedPriorityForNiceness = new byte[40];
@@ -337,7 +349,7 @@ public class Thread implements Runnable {
     private final Object blockerLock = new Object();
 
     /**
-     * Starts a virtual thread. Compared to {@linkplain startVirtualThread(Runnable)}, it returns
+     * Starts a virtual thread. Compared to {@linkplain #startVirtualThread(Runnable)}, it returns
      * the carrier thread. This is useful for internal testing and verifying the states of a
      * carrier thread.
      *
@@ -345,7 +357,7 @@ public class Thread implements Runnable {
      */
     public static Thread startVirtual(Runnable task) {
         Objects.requireNonNull(task);
-        VirtualThreadContext vContext = new VirtualThreadContext(task);
+        VirtualThreadContext vContext = new VirtualThreadContext(task, nextThreadID());
         return Thread.startVirtual(vContext);
     }
 
@@ -446,18 +458,35 @@ public class Thread implements Runnable {
      */
     public static final int MAX_PRIORITY = 10;
 
+    /*
+     * Current inner-most continuation.
+     */
+    private Continuation cont;
+
+    /**
+     * Returns the current continuation.
+     * @hide
+     */
+    public Continuation getContinuation() {
+        return cont;
+    }
+
+    /**
+     * Sets the current continuation.
+     * @hide
+     */
+    public void setContinuation(Continuation cont) {
+        this.cont = cont;
+    }
+
     /**
      * Returns the Thread object for the current platform thread. If the
      * current thread is a virtual thread then this method returns the carrier.
      * @hide
      */
     @IntrinsicCandidate
-    // Android-changed: Android has a different implementation.
-    // static native Thread currentCarrierThread();
-    public static Thread currentCarrierThread() {
-        // TODO: Simple use currentThread() until java.lang.VirtualThread is supported.
-        return currentThread();
-    }
+    @FastNative
+    static native Thread currentCarrierThread();
 
     /**
      * Returns a reference to the currently executing thread object.
@@ -473,9 +502,27 @@ public class Thread implements Runnable {
      * Sets the Thread object to be returned by Thread.currentThread().
      */
     @IntrinsicCandidate
-    void setCurrentThread(Thread thread) {
-        // TODO: Implement this.
+    final void setCurrentThread(Thread thread) {
+        // Perform sanity check for the upstream usage of this instance method.
+        // TODO: Avoid this check by replacing all call sites with the static method.
+        if (this != currentCarrierThread()) {
+            throw new WrongThreadException("setCurrentThread(Thread) can only be called on the "
+                    + "current carrier thread.");
+        }
+
+        if (thread != this && !(thread instanceof VirtualThread)) {
+            throw new IllegalArgumentException("Must be a VirtualThread or "
+                    + "the current carrier thread.");
+        }
+
+        setCurrentThreadNative(thread);
     }
+
+    /**
+     * Set the current thread in the thread-local storage.
+     */
+    @FastNative
+    private native static void setCurrentThreadNative(Thread thread);
 
     /**
      * A hint to the scheduler that the current thread is willing to yield
@@ -493,7 +540,15 @@ public class Thread implements Runnable {
      * concurrency control constructs such as the ones in the
      * {@link java.util.concurrent.locks} package.
      */
-    public static native void yield();
+    public static void yield() {
+        if (currentThread() instanceof VirtualThread vthread) {
+            vthread.tryYield();
+        } else {
+            yield0();
+        }
+    }
+
+    private static native void yield0();
 
     /**
      * Causes the currently executing thread to sleep (temporarily cease
@@ -578,6 +633,7 @@ public class Thread implements Runnable {
 
         sleep(millis);
         */
+
         // The JLS 3rd edition, section 17.9 says: "...sleep for zero
         // time...need not have observable effects."
         if (millis == 0 && nanos == 0) {
@@ -588,14 +644,27 @@ public class Thread implements Runnable {
             return;
         }
 
-        final int nanosPerMilli = 1000000;
-        final long durationNanos;
-        if (millis >= Long.MAX_VALUE / nanosPerMilli - 1L) {
-          // > 292 years. Avoid overflow by capping it at roughly 292 years.
-          durationNanos = Long.MAX_VALUE;
+        final long totalNanos;
+        if (millis >= Long.MAX_VALUE / NANOS_PER_MILLI - 1L) {
+            // > 292 years. Avoid overflow by capping it at roughly 292 years.
+            totalNanos = Long.MAX_VALUE;
         } else {
-          durationNanos = (millis * nanosPerMilli) + nanos;
+            totalNanos = (millis * NANOS_PER_MILLI) + nanos;
         }
+        // END Android-changed: Implement sleep() methods using a shared native implementation.
+
+        if (currentThread() instanceof VirtualThread vthread) {
+            vthread.sleepNanos(totalNanos);
+        } else {
+            sleep0(totalNanos);
+        }
+    }
+
+    private static final int NANOS_PER_MILLI = 1000000;
+
+    // Android-changed: Implement sleep() methods using a shared native implementation.
+    // private static native void sleep0(long nanos) throws InterruptedException;
+    private static void sleep0(long durationNanos) throws InterruptedException {
         long startNanos = System.nanoTime();
 
         Object lock = currentThread().lock;
@@ -607,12 +676,87 @@ public class Thread implements Runnable {
             for (long elapsed = 0L; elapsed < durationNanos;
                     elapsed = System.nanoTime() - startNanos) {
                 final long remaining = durationNanos - elapsed;
-                millis = remaining / nanosPerMilli;
-                nanos = (int) (remaining % nanosPerMilli);
+                long millis = remaining / NANOS_PER_MILLI;
+                int nanos = (int) (remaining % NANOS_PER_MILLI);
                 sleep(lock, millis, nanos);
             }
         }
-        // END Android-changed: Implement sleep() methods using a shared native implementation.
+    }
+
+    /**
+     * Causes the currently executing thread to sleep (temporarily cease
+     * execution) for the specified duration, subject to the precision and
+     * accuracy of system timers and schedulers. This method is a no-op if
+     * the duration is {@linkplain Duration#isNegative() negative}.
+     *
+     * @param  duration
+     *         the duration to sleep
+     *
+     * @throws  InterruptedException
+     *          if the current thread is interrupted while sleeping. The
+     *          <i>interrupted status</i> of the current thread is
+     *          cleared when this exception is thrown.
+     *
+     * @since 19
+     */
+    public static void sleep(Duration duration) throws InterruptedException {
+        long nanos = NANOSECONDS.convert(duration);  // MAX_VALUE if > 292 years
+        if (nanos < 0) {
+            return;
+        }
+
+        // Android-added: Handle nanos == 0 case.
+        // The JLS 3rd edition, section 17.9 says: "...sleep for zero
+        // time...need not have observable effects."
+        if (nanos == 0) {
+            // ...but we still have to handle being interrupted.
+            if (Thread.interrupted()) {
+                throw new InterruptedException();
+            }
+            return;
+        }
+
+        ThreadSleepEvent event = beforeSleep(nanos);
+        try {
+            if (currentThread() instanceof VirtualThread vthread) {
+                vthread.sleepNanos(nanos);
+            } else {
+                sleep0(nanos);
+            }
+        } finally {
+            afterSleep(event);
+        }
+    }
+
+
+    /**
+     * Called before sleeping to create a jdk.ThreadSleep event.
+     */
+    private static ThreadSleepEvent beforeSleep(long nanos) {
+        ThreadSleepEvent event = null;
+        if (ThreadSleepEvent.isTurnedOn()) {
+            try {
+                event = new ThreadSleepEvent();
+                event.time = nanos;
+                event.begin();
+            } catch (OutOfMemoryError e) {
+                event = null;
+            }
+        }
+        return event;
+    }
+
+    /**
+     * Called after sleeping to commit the jdk.ThreadSleep event.
+     */
+    private static void afterSleep(ThreadSleepEvent event) {
+        if (event != null) {
+            try {
+                event.commit();
+            } catch (OutOfMemoryError e) {
+                // ignore
+            }
+        }
     }
 
     /**
@@ -720,8 +864,11 @@ public class Thread implements Runnable {
 
         this.group = g;
         this.daemon = parent.isDaemon();
-        this.niceness = parent.getPosixNicenessInternal();
         this.priority = parent.priority;
+        // niceness is not inherited from the parent, but is used to set the actual OS priority.
+        // Reset it to correspond to priority.
+        this.niceness = nicenessForPriority(this.priority);
+
         // Android-changed: Moved into init2(Thread, boolean) helper method.
         /*
         if (security == null || isCCLOverridden(parent.getClass()))
@@ -959,7 +1106,7 @@ public class Thread implements Runnable {
 
     // BEGIN Android-added: Private constructor - used by the runtime.
     /** @hide */
-    Thread(ThreadGroup group, String name, int niceness, boolean daemon) {
+    Thread(ThreadGroup group, String name, int priority, boolean daemon) {
         this.group = group;
         this.group.addUnstarted();
         // Must be tolerant of threads without a name.
@@ -972,8 +1119,8 @@ public class Thread implements Runnable {
         // undesirable to clobber their natively set name.
         this.name = name;
 
-        this.niceness = niceness;
-        this.priority = cachingPriorityForNiceness(niceness);
+        this.priority = priority;
+        this.niceness = nicenessForPriority(priority);
         this.daemon = daemon;
         init2(currentThread(), true);
         this.stackSize = 0;
@@ -1192,6 +1339,24 @@ public class Thread implements Runnable {
     }
 
     /**
+     * Creates a virtual thread to execute a task and schedules it to execute.
+     *
+     * <p> This method is equivalent to:
+     * <pre>{@code Thread.ofVirtual().start(task); }</pre>
+     *
+     * @param task the object to run when the thread executes
+     * @return a new, and started, virtual thread
+     * @see <a href="#inheritance">Inheritance when creating threads</a>
+     * @since 21
+     */
+    public static Thread startVirtualThread(Runnable task) {
+        Objects.requireNonNull(task);
+        var thread = ThreadBuilders.newVirtualThread(null, null, 0, task);
+        thread.start();
+        return thread;
+    }
+
+    /**
      * Returns {@code true} if this thread is a virtual thread. A virtual thread
      * is scheduled by the Java virtual machine rather than the operating system.
      *
@@ -1205,7 +1370,8 @@ public class Thread implements Runnable {
     public final boolean isVirtual() {
         // Android-changed: Android has its own implementation.
         // return (this instanceof BaseVirtualThread);
-        return target instanceof VirtualThreadContext;
+        return target instanceof VirtualThreadContext ||
+                this instanceof BaseVirtualThread;
     }
 
     /**
@@ -1775,32 +1941,19 @@ public class Thread implements Runnable {
      * @see        ThreadGroup#getMaxPriority()
      */
     public final void setPriority(int newPriority) {
-        ThreadGroup g;
         checkAccess();
         if (newPriority > MAX_PRIORITY || newPriority < MIN_PRIORITY) {
             // Android-changed: Improve exception message when the new priority is out of bounds.
             throw new IllegalArgumentException("Priority out of range: " + newPriority);
         }
-        if((g = getThreadGroup()) != null) {
-            if (newPriority > g.getMaxPriority()) {
-                newPriority = g.getMaxPriority();
-            }
-            // Android-changed: Avoid native call if Thread is not yet started.
-            // Pass both priority and niceness, since S workaround requires priority, otherwise we
-            // need niceness.
-            // was: setPriority0(priority = newPriority);
-            synchronized(this) {
-                priority = newPriority;  // Ignored by us if already started.
-                niceness = nicenessForPriority(newPriority);
-                if (isAlive()) {
-                    setPriority0(newPriority, niceness);
-                }
-            }
+        if (!isVirtual()) {
+            priority(newPriority);
         }
     }
 
     void priority(int newPriority) {
-        ThreadGroup g = group;
+        // Android-changed:  Use getThreadGroup() to workaround exit() not being called.
+        ThreadGroup g = getThreadGroup();
         if (g != null) {
             int maxPriority = g.getMaxPriority();
             if (newPriority > maxPriority) {
@@ -1833,8 +1986,8 @@ public class Thread implements Runnable {
     public final int setPosixNicenessInternal(int newNiceness) {
         synchronized(this) {
             this.niceness = newNiceness;
-            // Don't bother setting priority field here; it's only for backward compatibility, and
-            // historically we didn't set priority in this case.
+            // We do not set the priority field here, since the effect should not be inherited
+            // by children.
             if (isAlive()) {
                 return setNiceness0(newNiceness);
             }
@@ -1864,8 +2017,13 @@ public class Thread implements Runnable {
      * @see     #setPriority
      */
     public final int getPriority() {
-        // Android-changed: Convert from stored niceness.
-        return cachingPriorityForNiceness(niceness);
+        if (isVirtual()) {
+            return Thread.NORM_PRIORITY;
+        } else {
+            // We return the inheritable priority, even if it does not match niceness.
+            // Either option can be confusing, and this matches historical behavior.
+            return priority;
+        }
     }
 
     /**
@@ -2031,6 +2189,13 @@ public class Thread implements Runnable {
         if (millis < 0) {
             throw new IllegalArgumentException("timeout value is negative");
         }
+        if (this instanceof VirtualThread vthread) {
+            if (isAlive()) {
+                long nanos = MILLISECONDS.toNanos(millis);
+                vthread.joinNanos(nanos);
+            }
+            return;
+        }
 
         // BEGIN Android-changed: Synchronize on separate lock object not this Thread.
         // nativePeer and hence isAlive() can change asynchronously, but Thread::Destroy
@@ -2124,6 +2289,53 @@ public class Thread implements Runnable {
      */
     public final void join() throws InterruptedException {
         join(0);
+    }
+
+    /**
+     * Waits for this thread to terminate for up to the given waiting duration.
+     *
+     * <p> This method does not wait if the duration to wait is less than or
+     * equal to zero. In this case, the method just tests if the thread has
+     * terminated.
+     *
+     * @param   duration
+     *          the maximum duration to wait
+     *
+     * @return  {@code true} if the thread has terminated, {@code false} if the
+     *          thread has not terminated
+     *
+     * @throws  InterruptedException
+     *          if the current thread is interrupted while waiting.
+     *          The <i>interrupted status</i> of the current thread is cleared
+     *          when this exception is thrown.
+     *
+     * @throws  IllegalThreadStateException
+     *          if this thread has not been started.
+     *
+     * @since 19
+     */
+    public final boolean join(Duration duration) throws InterruptedException {
+        long nanos = NANOSECONDS.convert(duration); // MAX_VALUE if > 292 years
+
+        Thread.State state = threadState();
+        if (state == State.NEW)
+            throw new IllegalThreadStateException("Thread not started");
+        if (state == State.TERMINATED)
+            return true;
+        if (nanos <= 0)
+            return false;
+
+        if (this instanceof VirtualThread vthread) {
+            return vthread.joinNanos(nanos);
+        }
+
+        // convert to milliseconds
+        long millis = MILLISECONDS.convert(nanos, NANOSECONDS);
+        if (nanos > NANOSECONDS.convert(millis, MILLISECONDS)) {
+            millis += 1L;
+        }
+        join(millis);
+        return isTerminated();
     }
 
     /**
@@ -2252,8 +2464,6 @@ public class Thread implements Runnable {
      *
      * @return A builder for creating {@code Thread} or {@code ThreadFactory} objects.
      * @since 21
-     *
-     * @hide TODO: Expose this API.
      */
     public static Builder.OfPlatform ofPlatform() {
         return new ThreadBuilders.PlatformThreadBuilder();
@@ -2274,8 +2484,6 @@ public class Thread implements Runnable {
      *
      * @return A builder for creating {@code Thread} or {@code ThreadFactory} objects.
      * @since 21
-     *
-     * @hide TODO: Expose this API.
      */
     public static Builder.OfVirtual ofVirtual() {
         return new ThreadBuilders.VirtualThreadBuilder();
@@ -2308,8 +2516,6 @@ public class Thread implements Runnable {
      * @see Thread#ofPlatform()
      * @see Thread#ofVirtual()
      * @since 21
-     *
-     * @hide TODO: Expose this sealed class as the API.
      */
     // Android-changed: Remove sealed keyword to make Metalava happy.
     public interface Builder {
@@ -2404,8 +2610,6 @@ public class Thread implements Runnable {
          *
          * @see Thread#ofPlatform()
          * @since 21
-         *
-         * @hide TODO: Expose this API.
          */
         interface OfPlatform extends Builder {
             @Override OfPlatform name(String name);
@@ -2470,8 +2674,6 @@ public class Thread implements Runnable {
          *
          * @see Thread#ofVirtual()
          * @since 21
-         *
-         * @hide TODO: Expose this API.
          */
         interface OfVirtual extends Builder {
             @Override OfVirtual name(String name);
