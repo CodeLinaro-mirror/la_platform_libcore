@@ -331,6 +331,7 @@ java_system_modules {
         "//frameworks/libs/modules-utils/java",
         "//libcore:__subpackages__",
         "//tools/platform-compat/java/android/compat/annotation",
+        "//packages/modules/Virtualization/libs/framework-virtualization",
     ],
 
     libs: ["core-all"],
@@ -553,16 +554,38 @@ java_defaults {
 // contains lambdas. This contains all classes / methods required by javac
 // when generating invoke-dynamic lambda implementation code, even those that
 // are also in the public SDK API from API level 26 onwards.
+//
+// This version is always built from source.
 java_library {
-    name: "core-lambda-stubs",
+    name: "core-lambda-stubs-src",
     visibility: [
-        "//visibility:public",
+        "//development/build",
     ],
     defaults: ["core_lambda_stubs_defaults"],
     srcs: [
         ":openjdk_lambda_stub_files",
         ":openjdk_lambda_duplicate_stub_files",
     ],
+    // This jar is packaged as part of the SDK, use -target 8 so that it works
+    // with old JDKs.
+    java_version: "1.8",
+    is_stubs_module: true,
+}
+
+// Creates a jar that exists to satisfy javac when compiling source code that
+// contains lambdas. This contains all classes / methods required by javac
+// when generating invoke-dynamic lambda implementation code, even those that
+// are also in the public SDK API from API level 26 onwards.
+//
+// This version may be replaced by a prebuilt version from the ART module SDK
+// depending on the product config.
+java_library {
+    name: "core-lambda-stubs",
+    visibility: [
+        "//visibility:public",
+    ],
+    defaults: ["core_lambda_stubs_defaults"],
+    static_libs: ["core-lambda-stubs-src"],
     // This jar is packaged as part of the SDK, use -target 8 so that it works
     // with old JDKs.
     java_version: "1.8",
@@ -1071,7 +1094,7 @@ droidstubs {
 droiddoc_exported_dir {
     name: "luni-annotated-flagged-stubs",
     path: "luni/annotations/flagged_api",
-    visibility: ["//visibility:private"],
+    visibility: ["//libcore:__subpackages__"],
 }
 
 java_library {
@@ -1085,6 +1108,7 @@ java_library {
     visibility: [
         "//art/build/flags",
         "//libcore:__subpackages__",
+        "//external/conscrypt:__subpackages__",
     ],
 }
 
@@ -1096,6 +1120,7 @@ aconfig_declarations {
     srcs: ["libcore.aconfig"],
     visibility: [
         "//libcore:__subpackages__",
+        "//external/conscrypt",
         "//frameworks/base",
     ],
 }
@@ -1121,7 +1146,7 @@ java_library {
     system_modules: "libcore-bootstrap-core-current-from-text-system-modules",
     installable: false,
     visibility: [
-        "//visibility:private",
+        "//libcore:__subpackages__",
     ],
 }
 
@@ -1149,7 +1174,7 @@ java_aconfig_library {
     sdk_version: "none",
     patch_module: "java.base",
     installable: false,
-    visibility: ["//visibility:private"],
+    visibility: ["//libcore:__subpackages__"],
 }
 
 java_aconfig_library {
@@ -1159,7 +1184,7 @@ java_aconfig_library {
     sdk_version: "none",
     patch_module: "java.base",
     installable: false,
-    visibility: ["//visibility:private"],
+    visibility: ["//libcore:__subpackages__"],
 }
 
 java_aconfig_library {
