@@ -146,6 +146,8 @@ filegroup {
         "ojluni/src/main/java/java/lang/Float.java",
         "ojluni/src/main/java/java/lang/foreign/Arena.java",
         "ojluni/src/main/java/java/lang/foreign/MemorySegment.java",
+        "ojluni/src/main/java/java/lang/foreign/MemoryLayout.java",
+        "ojluni/src/main/java/java/lang/foreign/ValueLayout.java",
         "ojluni/src/main/java/java/lang/FunctionalInterface.java",
         "ojluni/src/main/java/java/lang/IllegalAccessError.java",
         "ojluni/src/main/java/java/lang/IllegalAccessException.java",
@@ -1455,26 +1457,11 @@ filegroup {
     ],
     licenses: ["libcore_ojluni_src_main_license"],
     srcs: [
-        "ojluni/src/lambda/java/java/lang/invoke/LambdaMetafactory.java",
-        "ojluni/src/lambda/java/java/lang/invoke/SerializedLambda.java",
-        "ojluni/src/lambda/java/java/lang/invoke/StringConcatFactory.java",
-    ],
-}
-
-filegroup {
-    name: "openjdk_lambda_duplicate_stub_files",
-    licenses: ["libcore_ojluni_src_main_license"],
-    srcs: [
-        "ojluni/src/lambda/java/java/lang/invoke/CallSite.java",
-        "ojluni/src/lambda/java/java/lang/invoke/MethodHandles.java",
-        "ojluni/src/lambda/java/java/lang/invoke/LambdaConversionException.java",
-        "ojluni/src/lambda/java/java/lang/invoke/LambdaMetafactory.java",
-        "ojluni/src/lambda/java/java/lang/invoke/SerializedLambda.java",
-        "ojluni/src/lambda/java/java/lang/invoke/MethodHandle.java",
-        "ojluni/src/lambda/java/java/lang/invoke/MethodType.java",
-        "ojluni/src/lambda/java/java/lang/invoke/StringConcatException.java",
-        "ojluni/src/lambda/java/java/lang/runtime/SwitchBootstraps.java",
-        // Hide the java.lang.constant APIs until master switches away from Android UDC. b/270028670
+        // EnumDesc is a hidden inner class of non-hidden Enum class.
+        // To avoid duplicate definition error of Enum class when building
+        // "core-current-stubs-for-system-modules", the EnumDesc.class will be later jarjar-ed
+        // with core-lambda-jarjar-rules.txt into an inner class, i.e. java.lang.Enum$EnumDesc.
+        "ojluni/src/lambda/java/java/lang/EnumDesc.java",
         "ojluni/src/lambda/java/java/lang/constant/AsTypeMethodHandleDesc.java",
         "ojluni/src/lambda/java/java/lang/constant/ClassDesc.java",
         "ojluni/src/lambda/java/java/lang/constant/Constable.java",
@@ -1490,6 +1477,45 @@ filegroup {
         "ojluni/src/lambda/java/java/lang/constant/PrimitiveClassDescImpl.java",
         "ojluni/src/lambda/java/java/lang/constant/ReferenceClassDescImpl.java",
         "ojluni/src/lambda/java/java/lang/invoke/ConstantBootstraps.java",
+        "ojluni/src/lambda/java/java/lang/invoke/LambdaMetafactory.java",
+        "ojluni/src/lambda/java/java/lang/invoke/SerializedLambda.java",
+        "ojluni/src/lambda/java/java/lang/invoke/StringConcatFactory.java",
+    ],
+}
+
+filegroup {
+    name: "openjdk_lambda_duplicate_stub_files",
+    licenses: ["libcore_ojluni_src_main_license"],
+    srcs: [
+        // EnumDesc is a hidden inner class of non-hidden Enum class.
+        // To avoid duplicate definition error of Enum class when building
+        // "core-current-stubs-for-system-modules", the EnumDesc.class will be later jarjar-ed
+        // with core-lambda-jarjar-rules.txt into an inner class, i.e. java.lang.Enum$EnumDesc.q
+        "ojluni/src/lambda/java/java/lang/EnumDesc.java",
+        "ojluni/src/lambda/java/java/lang/constant/AsTypeMethodHandleDesc.java",
+        "ojluni/src/lambda/java/java/lang/constant/ClassDesc.java",
+        "ojluni/src/lambda/java/java/lang/constant/Constable.java",
+        "ojluni/src/lambda/java/java/lang/constant/ConstantDesc.java",
+        "ojluni/src/lambda/java/java/lang/constant/ConstantDescs.java",
+        "ojluni/src/lambda/java/java/lang/constant/DirectMethodHandleDesc.java",
+        "ojluni/src/lambda/java/java/lang/constant/DirectMethodHandleDescImpl.java",
+        "ojluni/src/lambda/java/java/lang/constant/DynamicCallSiteDesc.java",
+        "ojluni/src/lambda/java/java/lang/constant/DynamicConstantDesc.java",
+        "ojluni/src/lambda/java/java/lang/constant/MethodHandleDesc.java",
+        "ojluni/src/lambda/java/java/lang/constant/MethodTypeDesc.java",
+        "ojluni/src/lambda/java/java/lang/constant/MethodTypeDescImpl.java",
+        "ojluni/src/lambda/java/java/lang/constant/PrimitiveClassDescImpl.java",
+        "ojluni/src/lambda/java/java/lang/constant/ReferenceClassDescImpl.java",
+        "ojluni/src/lambda/java/java/lang/invoke/CallSite.java",
+        "ojluni/src/lambda/java/java/lang/invoke/ConstantBootstraps.java",
+        "ojluni/src/lambda/java/java/lang/invoke/MethodHandles.java",
+        "ojluni/src/lambda/java/java/lang/invoke/LambdaConversionException.java",
+        "ojluni/src/lambda/java/java/lang/invoke/LambdaMetafactory.java",
+        "ojluni/src/lambda/java/java/lang/invoke/SerializedLambda.java",
+        "ojluni/src/lambda/java/java/lang/invoke/MethodHandle.java",
+        "ojluni/src/lambda/java/java/lang/invoke/MethodType.java",
+        "ojluni/src/lambda/java/java/lang/invoke/StringConcatException.java",
+        "ojluni/src/lambda/java/java/lang/runtime/SwitchBootstraps.java",
     ],
 }
 
@@ -1538,7 +1564,6 @@ filegroup {
         "ojluni/src/main/java/java/lang/StringUTF16.java",
         "ojluni/src/main/java/java/lang/ThreadBuilders.java",
         "ojluni/src/main/java/java/lang/VirtualThread.java",
-        // Hide the java.lang.constant APIs until master switches away from Android UDC. b/270028670
         "ojluni/src/main/java/java/lang/invoke/ConstantBootstraps.java",
         "ojluni/src/main/java/java/lang/constant/AsTypeMethodHandleDesc.java",
         "ojluni/src/main/java/java/lang/constant/ClassDesc.java",
@@ -1643,6 +1668,9 @@ filegroup {
         "ojluni/src/main/java/jdk/internal/foreign/ArenaImpl.java",
         "ojluni/src/main/java/jdk/internal/foreign/NativeMemorySegmentImpl.java",
         "ojluni/src/main/java/jdk/internal/foreign/SegmentFactories.java",
+        "ojluni/src/main/java/jdk/internal/foreign/layout/AbstractLayout.java",
+        "ojluni/src/main/java/jdk/internal/foreign/layout/MemoryLayoutUtil.java",
+        "ojluni/src/main/java/jdk/internal/foreign/layout/ValueLayouts.java",
         "ojluni/src/main/java/jdk/random/L128X1024MixRandom.java",
         "ojluni/src/main/java/jdk/random/L128X128MixRandom.java",
         "ojluni/src/main/java/jdk/random/L128X256MixRandom.java",
