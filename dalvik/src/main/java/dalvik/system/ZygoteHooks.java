@@ -18,6 +18,7 @@ package dalvik.system;
 
 import static android.annotation.SystemApi.Client.MODULE_LIBRARIES;
 
+import android.annotation.FlaggedApi;
 import android.annotation.SystemApi;
 import android.icu.util.ULocale;
 
@@ -290,9 +291,11 @@ public final class ZygoteHooks {
      * @hide
      */
     @libcore.api.IntraCoreApi
+    @FlaggedApi(com.android.libcore.Flags.FLAG_OPENJDK_25_V1_APIS)
     public static boolean isInZygote() {
       return inZygoteProcess;
     }
+
 
     // Hook for SystemServer specific early initialization post-forking.
     private static native void nativePostForkSystemServer(int runtimeFlags);
