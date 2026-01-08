@@ -17,11 +17,13 @@
 package libcore.javax.net.ssl;
 
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 import java.util.Arrays;
 import javax.net.ssl.SSLParameters;
+import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -78,5 +80,62 @@ public class SSLParametersTest {
     assertTrue(params.getUseCipherSuitesOrder());
     params.setUseCipherSuitesOrder(false);
     assertFalse(params.getUseCipherSuitesOrder());
+  }
+
+  @Test
+  public void test_getSetNamedGroups() {
+    assumeOpenjdk25V1ApisFlagTrue();
+    SSLParameters params = new SSLParameters();
+
+    assertTrue(params.getNamedGroups() == null);
+
+    String[] groups = new String[] {"x25519", "secp256r1"};
+    params.setNamedGroups(groups);
+    assertTrue(Arrays.equals(new String[] {"x25519", "secp256r1"}, params.getNamedGroups()));
+
+    groups[0] = "modified";
+    assertTrue(Arrays.equals(new String[] {"x25519", "secp256r1"}, params.getNamedGroups()));
+
+    String[] returnedGroups = params.getNamedGroups();
+    returnedGroups[0] = "modified";
+    assertTrue(Arrays.equals(new String[] {"x25519", "secp256r1"}, params.getNamedGroups()));
+
+    params.setNamedGroups(null);
+    assertTrue(params.getNamedGroups() == null);
+
+    params.setNamedGroups(new String[0]);
+    assertTrue(params.getNamedGroups().length == 0);
+  }
+
+  @Test
+  public void test_setNamedGroups_invalidInputs() {
+    assumeOpenjdk25V1ApisFlagTrue();
+    SSLParameters params = new SSLParameters();
+
+    assertThrows(IllegalArgumentException.class, () -> {
+      params.setNamedGroups(new String[] {"x25519", null});
+    });
+
+    assertThrows(IllegalArgumentException.class, () -> {
+      params.setNamedGroups(new String[] {" "});
+    });
+
+    assertThrows(IllegalArgumentException.class, () -> {
+      params.setNamedGroups(new String[] {"x25519", ""});
+    });
+
+    assertThrows(IllegalArgumentException.class, () -> {
+      params.setNamedGroups(new String[] {"x25519", "secp256r1", "x25519"});
+    });
+  }
+
+  private static void assumeOpenjdk25V1ApisFlagTrue() {
+    try {
+      Assume.assumeTrue(com.android.libcore.Flags.openjdk25V1Apis());
+    } catch (NoClassDefFoundError | NoSuchMethodError e) {
+      // Skip the test in MtsConscryptFdSocketTestCases when the flag isn't declared.
+      // http://b/472696869
+      Assume.assumeNoException(e);
+    }
   }
 }
