@@ -143,7 +143,6 @@ public final class Os {
      *
      * @return null if the underlying native {@code dladdr} call fails.
      */
-    @android.annotation.FlaggedApi(com.android.libcore.Flags.FLAG_OPENJDK_21_V2_APIS)
     public static StructDlInfo dladdr(long addr) { return Libcore.os.dladdr(addr); }
 
     /**
@@ -394,13 +393,15 @@ public final class Os {
     public static InetAddress ioctlInetAddress(FileDescriptor fd, int cmd, String interfaceName) throws ErrnoException { return Libcore.os.ioctlInetAddress(fd, cmd, interfaceName); }
 
     /**
-     * See <a href="https://man7.org/linux/man-pages/man2/ioctl.2.html">ioctl(3)</a>.
+     * See <a href="https://man7.org/linux/man-pages/man2/ioctl.2.html">ioctl(2)</a>.
      * System call manipulates the underlying device parameters of special files. In particular,
      * many operating characteristics of character special files.
      *
      * @param fd    an open file descriptor
      * @param cmd   encoded in it whether the argument is an "in" parameter or "out" parameter
-     * @return      returns a nonnegative value on success
+     * @return      the value written to the {@code int} argument of the ioctl(2). This is
+     *              different from {@link #ioctlRet}, which returns the ioctl system call
+     *              return value.
      * @throws ErrnoException A checked exception thrown when {@link Os} methods fail.
      *
      * @hide
@@ -408,6 +409,22 @@ public final class Os {
     @SystemApi(client = MODULE_LIBRARIES)
     public static int ioctlInt(@NonNull FileDescriptor fd, int cmd) throws ErrnoException {
         return Libcore.os.ioctlInt(fd, cmd);
+    }
+
+    /**
+     * See <a href="https://man7.org/linux/man-pages/man2/ioctl.2.html">ioctl(2)</a>.
+     * System call manipulates the underlying device parameters of special files. In particular,
+     * many operating characteristics of character special files.
+     *
+     * @param fd    an open file descriptor
+     * @param cmd   encoded in it whether the argument is an "in" parameter or "out" parameter
+     * @return      the return value of the system call. This is different from {@link #ioctlInt}
+     *              which returns the value written to the {@code int} argument of the ioctl.
+     * @throws ErrnoException A checked exception thrown when {@link Os} methods fail.
+     */
+    @android.annotation.FlaggedApi("android.app.privatecompute.flags.enable_pcc_framework_support")
+    public static int ioctlRet(@NonNull FileDescriptor fd, int cmd) throws ErrnoException {
+        return Libcore.os.ioctlRet(fd, cmd);
     }
 
     /**

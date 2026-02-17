@@ -165,6 +165,12 @@ public final class OsConstants {
     public static final int ARPHRD_ETHER;
 
     /**
+     * Gets the protection mask for an ashmem region.
+     */
+    @android.annotation.FlaggedApi("android.app.privatecompute.flags.enable_pcc_framework_support")
+    public static final int ASHMEM_GET_PROT_MASK;
+
+    /**
       * The virtio-vsock {@code svmPort} value to bind for any available port.
       *
       * @see <a href="https://man7.org/linux/man-pages/man7/vsock.7.html">vsock(7)</a>
@@ -354,6 +360,27 @@ public final class OsConstants {
     public static final int F_DUPFD_CLOEXEC;
     public static final int F_GETFD;
     public static final int F_GETFL;
+
+    /**
+     * Get the seals set on the file.
+     *
+     * <p>See <a href="https://man7.org/linux/man-pages/man2/fcntl.2.html">fcntl(2)</a>.
+     */
+    @android.annotation.FlaggedApi("android.app.privatecompute.flags.enable_pcc_framework_support")
+    public static final int F_GET_SEALS;
+
+    /**
+     * Seal the file to prevent further write operations.
+     */
+    @android.annotation.FlaggedApi("android.app.privatecompute.flags.enable_pcc_framework_support")
+    public static final int F_SEAL_WRITE;
+
+    /**
+     * Seal the file to prevent future write operations.
+     */
+    @android.annotation.FlaggedApi("android.app.privatecompute.flags.enable_pcc_framework_support")
+    public static final int F_SEAL_FUTURE_WRITE;
+
     public static final int F_GETLK = OsConstantsHolder.F_GETLK;
     public static final int F_GETLK64 = OsConstantsHolder.F_GETLK64;
     public static final int F_GETOWN;
@@ -1322,6 +1349,7 @@ public final class OsConstants {
 
         ARPHRD_ETHER = 1;
         ARPHRD_LOOPBACK = 772;
+        ASHMEM_GET_PROT_MASK = 30470;
 
         VMADDR_PORT_ANY = -1;
         VMADDR_CID_ANY = -1;
@@ -1473,6 +1501,9 @@ public final class OsConstants {
         F_GETFD = 1;
         F_GETFL = 3;
         F_GETOWN = 9;
+        F_GET_SEALS = 1034;
+        F_SEAL_WRITE = 8;
+        F_SEAL_FUTURE_WRITE = 16;
         F_OK = 0;
         R_OK = 4;
         F_RDLCK = 0;

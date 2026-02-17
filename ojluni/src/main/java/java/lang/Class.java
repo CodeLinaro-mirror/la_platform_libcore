@@ -281,10 +281,10 @@ public final class Class<T> implements java.io.Serializable,
 
     /**
      * Class type index from dex file, lazily computed. An index of 65535 indicates that the type
-     * index isn't known. Volatile to avoid double-checked locking bugs.
+     * index isn't known.
      * TODO: really 16bits as type indices are 16bit.
      */
-    private transient volatile int dexTypeIndex;
+    private transient int dexTypeIndex;
 
     /** Number of instance fields that are object references. */
     private transient int numReferenceInstanceFields;
@@ -852,6 +852,7 @@ public final class Class<T> implements java.io.Serializable,
     @IntrinsicCandidate
     // Android-changed: JNI code can be replaced by simple java code.
     // public native boolean isAssignableFrom(Class<?> cls);
+    @dalvik.annotation.optimization.NeverInline
     public boolean isAssignableFrom(Class<?> cls) {
         if (this == cls) {
             return true;  // Can always assign to things of the same type.
