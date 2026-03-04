@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2016, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2012, 2023, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -176,7 +176,7 @@ public class TCKChronology {
     }
 
     @NonMts(reason = NonMtsReasons.ICU_VERSION_DEPENDENCY,
-        disabledUntilSdk = VersionCodes.C)
+        disabledUntilSdk = VersionCodes.CINNAMON_BUN)
     @Test(dataProvider = "calendarDisplayName")
     public void test_getDisplayName(String chronoId, String calendarDisplayName) {
         Chronology chrono = Chronology.of(chronoId);
@@ -433,4 +433,22 @@ public class TCKChronology {
         chrono.epochSecond(y, m, d, h, min, s, offset);
     }
 
+    @DataProvider
+    Object[][]  data_isIsoBased() {
+        return new Object[][] {
+                {IsoChronology.INSTANCE, true},
+                {JapaneseChronology.INSTANCE, true},
+                {MinguoChronology.INSTANCE, true},
+                {ThaiBuddhistChronology.INSTANCE, true},
+                {HijrahChronology.INSTANCE, false},
+        };
+    }
+
+    //-----------------------------------------------------------------------
+    // isIsoBased()
+    //-----------------------------------------------------------------------
+    @Test(dataProvider = "data_isIsoBased")
+    public void test_isIsoBased(Chronology chrono, boolean expected) {
+        assertEquals(chrono.isIsoBased(), expected);
+    }
 }

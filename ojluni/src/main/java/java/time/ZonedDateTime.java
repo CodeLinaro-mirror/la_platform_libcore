@@ -91,7 +91,6 @@ import java.time.zone.ZoneRules;
 import java.util.List;
 import java.util.Objects;
 
-// Android-changed: removed ValueBased paragraph.
 /**
  * A date-time with a time-zone in the ISO-8601 calendar system,
  * such as {@code 2007-12-03T10:15:30+01:00 Europe/Paris}.
@@ -143,6 +142,13 @@ import java.util.Objects;
  * of a {@code LocalDateTime} and a {@code ZoneId}. The {@code ZoneOffset} is
  * a vital, but secondary, piece of information, used to ensure that the class
  * represents an instant, especially during a daylight savings overlap.
+ * <p>
+ * This is a <a href="{@docRoot}/java.base/java/lang/doc-files/ValueBased.html">value-based</a>
+ * class; programmers should treat instances that are
+ * {@linkplain #equals(Object) equal} as interchangeable and should not
+ * use instances for synchronization, or unpredictable behavior may
+ * occur. For example, in a future release, synchronization may fail.
+ * The {@code equals} method should be used for comparisons.
  *
  * @implSpec
  * A {@code ZonedDateTime} holds state equivalent to three separate objects,
@@ -155,6 +161,7 @@ import java.util.Objects;
  *
  * @since 1.8
  */
+@jdk.internal.ValueBased
 public final class ZonedDateTime
         implements Temporal, ChronoZonedDateTime<LocalDate>, Serializable {
 
