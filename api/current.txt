@@ -2527,6 +2527,7 @@ package java.lang {
     method @NonNull public default java.util.stream.IntStream chars();
     method @NonNull public default java.util.stream.IntStream codePoints();
     method public static int compare(@NonNull CharSequence, @NonNull CharSequence);
+    method @FlaggedApi("com.android.libcore.openjdk_25_v1_apis") public default void getChars(int, int, @NonNull char[], int);
     method public default boolean isEmpty();
     method public int length();
     method @NonNull public CharSequence subSequence(int, int);
@@ -4416,7 +4417,6 @@ package java.lang {
     method @NonNull public StringBuffer delete(int, int);
     method @NonNull public StringBuffer deleteCharAt(int);
     method public void ensureCapacity(int);
-    method public void getChars(int, int, char[], int);
     method public int indexOf(@NonNull String);
     method public int indexOf(@NonNull String, int);
     method @NonNull public StringBuffer insert(int, char[], int, int);
@@ -4435,6 +4435,8 @@ package java.lang {
     method public int lastIndexOf(@NonNull String, int);
     method public int length();
     method public int offsetByCodePoints(int, int);
+    method @FlaggedApi("com.android.libcore.openjdk_25_v1_apis") @NonNull public StringBuffer repeat(int, int);
+    method @FlaggedApi("com.android.libcore.openjdk_25_v1_apis") @NonNull public StringBuffer repeat(@NonNull CharSequence, int);
     method @NonNull public StringBuffer replace(int, int, @NonNull String);
     method @NonNull public StringBuffer reverse();
     method public void setCharAt(int, char);
@@ -4495,6 +4497,8 @@ package java.lang {
     method public int lastIndexOf(@NonNull String, int);
     method public int length();
     method public int offsetByCodePoints(int, int);
+    method @FlaggedApi("com.android.libcore.openjdk_25_v1_apis") @NonNull public StringBuilder repeat(int, int);
+    method @FlaggedApi("com.android.libcore.openjdk_25_v1_apis") @NonNull public StringBuilder repeat(@NonNull CharSequence, int);
     method @NonNull public StringBuilder replace(int, int, @NonNull String);
     method @NonNull public StringBuilder reverse();
     method public void setCharAt(int, char);
@@ -6629,6 +6633,7 @@ package java.nio {
     method public java.nio.CharBuffer get(char[]);
     method public java.nio.CharBuffer get(int, char[], int, int);
     method public java.nio.CharBuffer get(int, char[]);
+    method @FlaggedApi("com.android.libcore.openjdk_25_v1_apis") public void getChars(int, int, @NonNull char[], int);
     method public final boolean hasArray();
     method public final boolean isEmpty();
     method public final int length();
@@ -13857,7 +13862,7 @@ package java.util {
     method @NonNull public default <T> T[] toArray(@NonNull java.util.function.IntFunction<T[]>);
   }
 
-  public class Collections {
+  public final class Collections {
     method @java.lang.SafeVarargs public static <T> boolean addAll(@NonNull java.util.Collection<? super T>, @NonNull T...);
     method @NonNull public static <T> java.util.Queue<T> asLifoQueue(@NonNull java.util.Deque<T>);
     method public static <T> int binarySearch(@NonNull java.util.List<? extends java.lang.Comparable<? super T>>, @NonNull T);
@@ -13875,13 +13880,13 @@ package java.util {
     method public static boolean disjoint(@NonNull java.util.Collection<?>, @NonNull java.util.Collection<?>);
     method @NonNull public static <T> java.util.Enumeration<T> emptyEnumeration();
     method @NonNull public static <T> java.util.Iterator<T> emptyIterator();
-    method @NonNull public static final <T> java.util.List<T> emptyList();
+    method @NonNull public static <T> java.util.List<T> emptyList();
     method @NonNull public static <T> java.util.ListIterator<T> emptyListIterator();
-    method @NonNull public static final <K, V> java.util.Map<K,V> emptyMap();
-    method @NonNull public static final <K, V> java.util.NavigableMap<K,V> emptyNavigableMap();
+    method @NonNull public static <K, V> java.util.Map<K,V> emptyMap();
+    method @NonNull public static <K, V> java.util.NavigableMap<K,V> emptyNavigableMap();
     method @NonNull public static <E> java.util.NavigableSet<E> emptyNavigableSet();
-    method @NonNull public static final <T> java.util.Set<T> emptySet();
-    method @NonNull public static final <K, V> java.util.SortedMap<K,V> emptySortedMap();
+    method @NonNull public static <T> java.util.Set<T> emptySet();
+    method @NonNull public static <K, V> java.util.SortedMap<K,V> emptySortedMap();
     method @NonNull public static <E> java.util.SortedSet<E> emptySortedSet();
     method @NonNull public static <T> java.util.Enumeration<T> enumeration(@NonNull java.util.Collection<T>);
     method public static <T> void fill(@NonNull java.util.List<? super T>, T);
@@ -16177,7 +16182,7 @@ package java.util.concurrent {
     method public java.util.concurrent.Future<?> submit(Runnable);
   }
 
-  public class Executors {
+  public final class Executors {
     method public static <T> java.util.concurrent.Callable<T> callable(Runnable, T);
     method public static java.util.concurrent.Callable<java.lang.Object> callable(Runnable);
     method public static java.util.concurrent.Callable<java.lang.Object> callable(java.security.PrivilegedAction<?>);
@@ -17234,7 +17239,7 @@ package java.util.concurrent.locks {
     method public void unlock();
   }
 
-  @FlaggedApi("com.android.libcore.openjdk_25_v1_apis") public final class LockSupport {
+  public final class LockSupport {
     method public static Object getBlocker(Thread);
     method public static void park(Object);
     method public static void park();

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2025, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -23,28 +23,29 @@
  * questions.
  */
 
+package jdk.internal;
 
-package java.lang;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
 
-import java.util.stream.IntStream;
+import static java.lang.annotation.ElementType.PARAMETER;
+import static java.lang.annotation.ElementType.TYPE_PARAMETER;
 
-@SuppressWarnings({"unchecked", "deprecation", "all"})
-public interface CharSequence {
-
-public int length();
-
-public char charAt(int index);
-
-@libcore.util.NonNull public java.lang.CharSequence subSequence(int start, int end);
-
-@libcore.util.NonNull public java.lang.String toString();
-
-@libcore.util.NonNull public default java.util.stream.IntStream chars() { throw new RuntimeException("Stub!"); }
-
-@libcore.util.NonNull public default java.util.stream.IntStream codePoints() { throw new RuntimeException("Stub!"); }
-
-public default int compare(@libcore.util.NonNull CharSequence cs1, @libcore.util.NonNull CharSequence cs2) { throw new RuntimeException("Stub!"); }
-
-public default void getChars(int srcBegin, int srcEnd, @libcore.util.NonNull char[] dst, int dstBegin) { throw new RuntimeException("Stub!"); }
-
+/**
+ * Indicates that the annotated parameter or type parameter is not expected to be a
+ * Value Based class.
+ * Using a parameter or type parameter of a <a href="../lang/doc-files/ValueBased.html">value-based classes</a>
+ * should produce warnings about behavior that is inconsistent with identity based semantics.
+ *
+ * Note this internal annotation is handled specially by the javac compiler.
+ * To work properly with {@code --release older-release}, it requires special
+ * handling in {@code make/langtools/src/classes/build/tools/symbolgenerator/CreateSymbols.java}
+ * and {@code src/jdk.compiler/share/classes/com/sun/tools/javac/jvm/ClassReader.java}.
+ *
+ * @since 25
+ */
+@Retention(RetentionPolicy.RUNTIME)
+@Target(value={PARAMETER, TYPE_PARAMETER})
+public @interface RequiresIdentity {
 }

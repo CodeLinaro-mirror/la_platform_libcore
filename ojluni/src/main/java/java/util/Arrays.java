@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2014 The Android Open Source Project
- * Copyright (c) 1997, 2023, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2025, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -34,7 +34,6 @@ import dalvik.annotation.compat.VersionCodes;
 import dalvik.system.VMRuntime;
 
 import jdk.internal.util.ArraysSupport;
-import jdk.internal.vm.annotation.ForceInline;
 import jdk.internal.vm.annotation.IntrinsicCandidate;
 
 import jdk.internal.misc.Unsafe;
@@ -96,30 +95,10 @@ public final class Arrays {
     private static final long SHORT_ARRAY_BASE_OFFSET = UNSAFE.arrayBaseOffset(short[].class);
     private static final long INT_ARRAY_BASE_OFFSET = UNSAFE.arrayBaseOffset(int[].class);
     private static final long LONG_ARRAY_BASE_OFFSET = UNSAFE.arrayBaseOffset(long[].class);
+    private static final long FLOAT_ARRAY_BASE_OFFSET = UNSAFE.arrayBaseOffset(float[].class);
+    private static final long DOUBLE_ARRAY_BASE_OFFSET = UNSAFE.arrayBaseOffset(double[].class);
 
-    // On arm32 we can't make unaligned memory accesses (using Unsafe or otherwise). If we do,
-    // we get SIGBUS with BUS_ADRALN.
-    //
-    // Unfortunately we can't check Unsafe.unalignedAccess() because it's not defined in libcore.
-    // Instead, we check if addressSize == 8 (i.e. 64-bit).
-    // On all supported 64-bit systems, unaligned access is permitted.
-    private static final boolean UNALIGNED_ACCESS = (UNSAFE.addressSize() == 8);
-
-    // For each array type, determine if unaligned access is permitted based on UNALIGNED_ACCESS and
-    // whether the array base offset (which is an offset from an aligned address) is unaligned.
     private static final int ALIGNMENT_MASK = (Long.BYTES - 1);
-    private static final boolean UNALIGNED_ACCESS_BOOLEAN =
-            UNALIGNED_ACCESS || ((BOOLEAN_ARRAY_BASE_OFFSET & ALIGNMENT_MASK) == 0);
-    private static final boolean UNALIGNED_ACCESS_BYTE =
-            UNALIGNED_ACCESS || ((BYTE_ARRAY_BASE_OFFSET & ALIGNMENT_MASK) == 0);
-    private static final boolean UNALIGNED_ACCESS_CHAR =
-            UNALIGNED_ACCESS || ((CHAR_ARRAY_BASE_OFFSET & ALIGNMENT_MASK) == 0);
-    private static final boolean UNALIGNED_ACCESS_SHORT =
-            UNALIGNED_ACCESS || ((SHORT_ARRAY_BASE_OFFSET & ALIGNMENT_MASK) == 0);
-    private static final boolean UNALIGNED_ACCESS_INT =
-            UNALIGNED_ACCESS || ((INT_ARRAY_BASE_OFFSET & ALIGNMENT_MASK) == 0);
-    private static final boolean UNALIGNED_ACCESS_LONG =
-            UNALIGNED_ACCESS || ((LONG_ARRAY_BASE_OFFSET & ALIGNMENT_MASK) == 0);
     // END Android: Set up Unsafe for vectorization.
 
 
@@ -1037,11 +1016,8 @@ public final class Arrays {
      * circular dependencies. To be removed in a future release.
      * 
     static final class LegacyMergeSort {
-        @SuppressWarnings("removal")
         private static final boolean userRequested =
-            java.security.AccessController.doPrivileged(
-                new sun.security.action.GetBooleanAction(
-                    "java.util.Arrays.useLegacyMergeSort")).booleanValue();
+                Boolean.getBoolean("java.util.Arrays.useLegacyMergeSort");
     }
     */
     // END Android-removed: LegacyMergeSort class (unused on Android).
@@ -1200,7 +1176,7 @@ public final class Arrays {
      * off is the offset to generate corresponding low, high in src
      * To be removed in a future release.
      */
-    @SuppressWarnings({"unchecked", "rawtypes"})
+    @SuppressWarnings("unchecked")
     private static void mergeSort(Object[] src,
                                   Object[] dest,
                                   int low,
@@ -2528,22 +2504,39 @@ public final class Arrays {
         if (aLength != bLength)
             return false;
 
-        // BEGIN Android-changed: keep for-loop implementation due to the absence of ArraySupport
-        // intrinsics.
-        // TODO(b/362153334) Assess whether it's worth writing intrinsics or not.
+        // BEGIN Android-changed: Vectorized equality check
         /*
         return ArraysSupport.mismatch(a, aFromIndex,
                                       b, bFromIndex,
                                       aLength) < 0;
         */
-        for (int idx = 0; idx < aLength; ++idx) {
-            if (a[aFromIndex++] != b[bFromIndex++]) {
+        int i = 0;
+        Unsafe unsafe = UNSAFE;
+        final Class unused = unsafe.getClass(); // Hoist null check
+        final long baseOffset = LONG_ARRAY_BASE_OFFSET;
+        // Vectorized loop: long[] is always aligned.
+        final int VECTOR_WIDTH_BYTES = 2 * Long.BYTES;
+        final int VECTOR_WIDTH_LONGS = VECTOR_WIDTH_BYTES / Long.BYTES;
+        int limit = aLength - VECTOR_WIDTH_LONGS;
+        for (; i <= limit; i += VECTOR_WIDTH_LONGS) {
+            long aOffset = baseOffset + (long) (aFromIndex + i) * Long.BYTES;
+            long bOffset = baseOffset + (long) (bFromIndex + i) * Long.BYTES;
+            long l1 = unsafe.getLong(a, aOffset);
+            long l2 = unsafe.getLong(a, aOffset + Long.BYTES);
+            long l3 = unsafe.getLong(b, bOffset);
+            long l4 = unsafe.getLong(b, bOffset + Long.BYTES);
+            if (((l1 ^ l3) | (l2 ^ l4)) != 0) {
+                return false;
+            }
+        }
+
+        for (; i < aLength; i++) {
+            if (a[aFromIndex + i] != b[bFromIndex + i]) {
                 return false;
             }
         }
         return true;
-        // END Android-changed: keep for-loop implementation due to the absence of ArraySupport
-        // intrinsics.
+        // END Android-changed: Vectorized equality check
     }
 
     /**
@@ -2573,14 +2566,11 @@ public final class Arrays {
         Unsafe unsafe = UNSAFE;
         final Class unused = unsafe.getClass(); // Hoist null check
         int i = 0;
-        if (!UNALIGNED_ACCESS_INT) {
-            if (length > 0) {
-                // Read the first integer to align subsequent memory reads.
-                if (unsafe.getInt(a, INT_ARRAY_BASE_OFFSET)
-                        != unsafe.getInt(a2, INT_ARRAY_BASE_OFFSET)) {
-                    return false;
-                }
-                i = 1;
+        // Align to 8 bytes.
+        for (; (INT_ARRAY_BASE_OFFSET + (long) i * Integer.BYTES & ALIGNMENT_MASK) != 0
+                && i < length; i++) {
+            if (a[i] != a2[i]) {
+                return false;
             }
         }
 
@@ -2598,20 +2588,11 @@ public final class Arrays {
             }
         }
 
-        long offset = INT_ARRAY_BASE_OFFSET + (long) i * Integer.BYTES;
-        long endOffset = INT_ARRAY_BASE_OFFSET + (long) (length - 1) * Integer.BYTES;
         // Tail Loop: Remaining bytes.
-        // Iterating from the start and the end lets us do two comparisons per loop iteration.
-        while (offset <= endOffset) {
-            int i1 = unsafe.getInt(a, offset);
-            int i2 = unsafe.getInt(a, endOffset);
-            int i3 = unsafe.getInt(a2, offset);
-            int i4 = unsafe.getInt(a2, endOffset);
-            if (((i1 ^ i3) | (i2 ^ i4)) != 0) {
+        for (; i < length; i++) {
+            if (a[i] != a2[i]) {
                 return false;
             }
-            offset += Integer.BYTES;
-            endOffset -= Integer.BYTES;
         }
         return true;
         // END Android-changed: Vectorized equality check
@@ -2659,22 +2640,61 @@ public final class Arrays {
         if (aLength != bLength)
             return false;
 
-        // BEGIN Android-changed: keep for-loop implementation due to the absence of ArraySupport
-        // intrinsics.
-        // TODO(b/362153334) Assess whether it's worth writing intrinsics or not.
+        // BEGIN Android-changed: Vectorized equality check
         /*
         return ArraysSupport.mismatch(a, aFromIndex,
                                       b, bFromIndex,
                                       aLength) < 0;
         */
-        for (int idx = 0; idx < aLength; ++idx) {
-            if (a[aFromIndex++] != b[bFromIndex++]) {
+        int i = 0;
+        int length = aLength;
+        Unsafe unsafe = UNSAFE;
+        final Class unused = unsafe.getClass(); // Hoist null check
+        final long baseOffset = INT_ARRAY_BASE_OFFSET;
+
+        // If the start of the ranges have different alignments wrt 8-bytes, we can't vectorize.
+        // e.g. a starts at 4-byte aligned address, b starts at 8-byte aligned address.
+        if ((((baseOffset + (long) aFromIndex * Integer.BYTES) & ALIGNMENT_MASK) !=
+                ((baseOffset + (long) bFromIndex * Integer.BYTES) & ALIGNMENT_MASK))) {
+            for (i = 0; i < length; i++) {
+                if (a[aFromIndex + i] != b[bFromIndex + i]) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // Align to 8 bytes.
+        for (; ((baseOffset + (long) (aFromIndex + i) * Integer.BYTES) & ALIGNMENT_MASK) != 0
+                    && i < length; i++) {
+            if (a[aFromIndex + i] != b[bFromIndex + i]) {
+                return false;
+            }
+        }
+
+        final int VECTOR_WIDTH_BYTES = 2 * Long.BYTES;
+        final int VECTOR_WIDTH_INTS = VECTOR_WIDTH_BYTES / Integer.BYTES;
+        int limit = length - VECTOR_WIDTH_INTS;
+        for (; i <= limit; i += VECTOR_WIDTH_INTS) {
+            long aOffset = baseOffset + (long) (aFromIndex + i) * Integer.BYTES;
+            long bOffset = baseOffset + (long) (bFromIndex + i) * Integer.BYTES;
+            long l1 = unsafe.getLong(a, aOffset);
+            long l2 = unsafe.getLong(a, aOffset + Long.BYTES);
+            long l3 = unsafe.getLong(b, bOffset);
+            long l4 = unsafe.getLong(b, bOffset + Long.BYTES);
+            if (((l1 ^ l3) | (l2 ^ l4)) != 0) {
+                return false;
+            }
+        }
+
+        // Tail Loop: Remaining bytes.
+        for (; i < length; i++) {
+            if (a[aFromIndex + i] != b[bFromIndex + i]) {
                 return false;
             }
         }
         return true;
-        // END Android-changed: keep for-loop implementation due to the absence of ArraySupport
-        // intrinsics.
+        // END Android-changed: Vectorized equality check
     }
 
     /**
@@ -2704,23 +2724,11 @@ public final class Arrays {
         Unsafe unsafe = UNSAFE;
         final Class unused = unsafe.getClass(); // Hoist null check
         int i = 0;
-        if (!UNALIGNED_ACCESS_SHORT) {
-            // Round up to 8 byte alignment if necessary.
-            if (length >= Integer.BYTES / Short.BYTES) {
-                // On 32-bit Android, the array base offset is often 12 (4-byte aligned).
-                // We can align to 8 bytes by reading a single int (2 shorts).
-                if (unsafe.getInt(a, SHORT_ARRAY_BASE_OFFSET)
-                        != unsafe.getInt(a2, SHORT_ARRAY_BASE_OFFSET)) {
-                    return false;
-                }
-                i += Integer.BYTES / Short.BYTES;
-            } else {
-                for (; i < length; i++) {
-                    if (a[i] != a2[i]) {
-                        return false;
-                    }
-                }
-                return true;
+        // Align to 8 bytes.
+        for (; (SHORT_ARRAY_BASE_OFFSET + (long) i * Short.BYTES & ALIGNMENT_MASK) != 0
+                && i < length; i++) {
+            if (a[i] != a2[i]) {
+                return false;
             }
         }
 
@@ -2789,22 +2797,60 @@ public final class Arrays {
         if (aLength != bLength)
             return false;
 
-        // BEGIN Android-changed: keep for-loop implementation due to the absence of ArraySupport
-        // intrinsics.
-        // TODO(b/362153334) Assess whether it's worth writing intrinsics or not.
+        // BEGIN Android-changed: Vectorized equality check
         /*
         return ArraysSupport.mismatch(a, aFromIndex,
                                       b, bFromIndex,
                                       aLength) < 0;
         */
-        for (int idx = 0; idx < aLength; ++idx) {
-            if (a[aFromIndex++] != b[bFromIndex++]) {
+        int i = 0;
+        int length = aLength;
+        Unsafe unsafe = UNSAFE;
+        final Class unused = unsafe.getClass(); // Hoist null check
+        final long baseOffset = SHORT_ARRAY_BASE_OFFSET;
+
+        // If the start of the ranges have different alignments wrt 8-bytes, we can't vectorize.
+        if ((((baseOffset + (long) aFromIndex * Short.BYTES) & ALIGNMENT_MASK) !=
+                ((baseOffset + (long) bFromIndex * Short.BYTES) & ALIGNMENT_MASK))) {
+            for (i = 0; i < length; i++) {
+                if (a[aFromIndex + i] != b[bFromIndex + i]) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // Align to 8 bytes.
+        for (; ((baseOffset + (long) (aFromIndex + i) * Short.BYTES) & ALIGNMENT_MASK) != 0
+                    && i < length; i++) {
+            if (a[aFromIndex + i] != b[bFromIndex + i]) {
+                return false;
+            }
+        }
+
+        final int VECTOR_WIDTH_BYTES = 2 * Long.BYTES;
+        final int VECTOR_WIDTH_SHORTS = VECTOR_WIDTH_BYTES / Short.BYTES;
+        int limit = length - VECTOR_WIDTH_SHORTS;
+        for (; i <= limit; i += VECTOR_WIDTH_SHORTS) {
+            long aOffset = baseOffset + (long) (aFromIndex + i) * Short.BYTES;
+            long bOffset = baseOffset + (long) (bFromIndex + i) * Short.BYTES;
+            long l1 = unsafe.getLong(a, aOffset);
+            long l2 = unsafe.getLong(a, aOffset + Long.BYTES);
+            long l3 = unsafe.getLong(b, bOffset);
+            long l4 = unsafe.getLong(b, bOffset + Long.BYTES);
+            if (((l1 ^ l3) | (l2 ^ l4)) != 0) {
+                return false;
+            }
+        }
+
+        // Tail Loop: Remaining bytes.
+        for (; i < length; i++) {
+            if (a[aFromIndex + i] != b[bFromIndex + i]) {
                 return false;
             }
         }
         return true;
-        // END Android-changed: keep for-loop implementation due to the absence of ArraySupport
-        // intrinsics.
+        // END Android-changed: Vectorized equality check
     }
 
     /**
@@ -2835,23 +2881,11 @@ public final class Arrays {
         Unsafe unsafe = UNSAFE;
         final Class unused = unsafe.getClass(); // Hoist null check
         int i = 0;
-        if (!UNALIGNED_ACCESS_CHAR) {
-            // Round up to 8 byte alignment if necessary.
-            if (length >= Integer.BYTES / Character.BYTES) {
-                // On 32-bit Android, the array base offset is often 12 (4-byte aligned).
-                // We can align to 8 bytes by reading a single int (2 chars).
-                if (unsafe.getInt(a, CHAR_ARRAY_BASE_OFFSET) !=
-                        unsafe.getInt(a2, CHAR_ARRAY_BASE_OFFSET)) {
-                    return false;
-                }
-                i += Integer.BYTES / Character.BYTES;
-            } else {
-                for (; i < length; i++) {
-                    if (a[i] != a2[i]) {
-                        return false;
-                    }
-                }
-                return true;
+        // Align to 8 bytes.
+        for (; (CHAR_ARRAY_BASE_OFFSET + (long) i * Character.BYTES & ALIGNMENT_MASK) != 0
+                && i < length; i++) {
+            if (a[i] != a2[i]) {
+                return false;
             }
         }
 
@@ -2920,22 +2954,61 @@ public final class Arrays {
         if (aLength != bLength)
             return false;
 
-        // BEGIN Android-changed: keep for-loop implementation due to the absence of ArraySupport
-        // intrinsics.
-        // TODO(b/362153334) Assess whether it's worth writing intrinsics or not.
+        // BEGIN Android-changed: Vectorized equality check
         /*
         return ArraysSupport.mismatch(a, aFromIndex,
                                       b, bFromIndex,
                                       aLength) < 0;
         */
-        for (int idx = 0; idx < aLength; ++idx) {
-            if (a[aFromIndex++] != b[bFromIndex++]) {
+        int i = 0;
+        int length = aLength;
+        Unsafe unsafe = UNSAFE;
+        final Class unused = unsafe.getClass(); // Hoist null check
+        final long baseOffset = CHAR_ARRAY_BASE_OFFSET;
+
+        long aStartAddress = baseOffset + (long) aFromIndex * Character.BYTES;
+        long bStartAddress = baseOffset + (long) bFromIndex * Character.BYTES;
+        // If the start of the ranges have different alignments wrt 8-bytes, we can't vectorize.
+        if ((aStartAddress & ALIGNMENT_MASK) != (bStartAddress & ALIGNMENT_MASK)) {
+            for (i = 0; i < length; i++) {
+                if (a[aFromIndex + i] != b[bFromIndex + i]) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // Align to 8 bytes.
+        for (; (baseOffset + (long) (aFromIndex + i) * Character.BYTES & ALIGNMENT_MASK) != 0
+                && i < length; i++) {
+            if (a[aFromIndex + i] != b[bFromIndex + i]) {
+                return false;
+            }
+        }
+
+        final int VECTOR_WIDTH_BYTES = 2 * Long.BYTES;
+        final int VECTOR_WIDTH_CHARS = VECTOR_WIDTH_BYTES / Character.BYTES;
+        int limit = length - VECTOR_WIDTH_CHARS;
+        for (; i <= limit; i += VECTOR_WIDTH_CHARS) {
+            long aOffset = baseOffset + (long) (aFromIndex + i) * Character.BYTES;
+            long bOffset = baseOffset + (long) (bFromIndex + i) * Character.BYTES;
+            long l1 = unsafe.getLong(a, aOffset);
+            long l2 = unsafe.getLong(a, aOffset + Long.BYTES);
+            long l3 = unsafe.getLong(b, bOffset);
+            long l4 = unsafe.getLong(b, bOffset + Long.BYTES);
+            if (((l1 ^ l3) | (l2 ^ l4)) != 0) {
+                return false;
+            }
+        }
+
+        // Tail Loop: Remaining bytes.
+        for (; i < length; i++) {
+            if (a[aFromIndex + i] != b[bFromIndex + i]) {
                 return false;
             }
         }
         return true;
-        // END Android-changed: keep for-loop implementation due to the absence of ArraySupport
-        // intrinsics.
+        // END Android-changed: Vectorized equality check
     }
 
     /**
@@ -2967,23 +3040,11 @@ public final class Arrays {
         final Class unused = unsafe.getClass(); // Hoist null check
         int i = 0;
 
-        if (!UNALIGNED_ACCESS_BYTE) {
-            // Round up to 8 byte alignment if necessary.
-            if (length >= 4) {
-                // On 32-bit Android, the array base offset is often 12 (4-byte aligned).
-                // We can align to 8 bytes by reading a single int (4 bytes).
-                if (unsafe.getInt(a, BYTE_ARRAY_BASE_OFFSET)
-                        != unsafe.getInt(a2, BYTE_ARRAY_BASE_OFFSET)) {
-                    return false;
-                }
-                i += Integer.BYTES;
-            } else {
-                for (; i < length; i++) {
-                    if (a[i] != a2[i]) {
-                        return false;
-                    }
-                }
-                return true;
+        // Align to 8 bytes.
+        for (; (BYTE_ARRAY_BASE_OFFSET + (long) i * Byte.BYTES & ALIGNMENT_MASK) != 0
+                && i < length; i++) {
+            if (a[i] != a2[i]) {
+                return false;
             }
         }
 
@@ -3001,20 +3062,11 @@ public final class Arrays {
             }
         }
 
-        long offset = BYTE_ARRAY_BASE_OFFSET + i;
-        long endOffset = BYTE_ARRAY_BASE_OFFSET + length - 1;
         // Tail Loop: Remaining bytes.
-        // Iterating from the start and the end lets us do two comparisons per loop iteration.
-        while (offset <= endOffset) {
-            byte b1 = unsafe.getByte(a, offset);
-            byte b2 = unsafe.getByte(a, endOffset);
-            byte b3 = unsafe.getByte(a2, offset);
-            byte b4 = unsafe.getByte(a2, endOffset);
-            if (((b1 ^ b3) | (b2 ^ b4)) != 0) {
+        for (; i < length; i++) {
+            if (a[i] != a2[i]) {
                 return false;
             }
-            endOffset--;
-            offset++;
         }
         return true;
         // END Android-changed: Vectorized equality check
@@ -3062,22 +3114,59 @@ public final class Arrays {
         if (aLength != bLength)
             return false;
 
-        // BEGIN Android-changed: keep for-loop implementation due to the absence of ArraySupport
-        // intrinsics.
-        // TODO(b/362153334) Assess whether it's worth writing intrinsics or not.
+        // BEGIN Android-changed: Vectorized equality check
         /*
         return ArraysSupport.mismatch(a, aFromIndex,
                                       b, bFromIndex,
                                       aLength) < 0;
         */
-        for (int idx = 0; idx < aLength; ++idx) {
-            if (a[aFromIndex++] != b[bFromIndex++]) {
+        int i = 0;
+        int length = aLength;
+        Unsafe unsafe = UNSAFE;
+        final Class unused = unsafe.getClass(); // Hoist null check
+        final long baseOffset = BYTE_ARRAY_BASE_OFFSET;
+
+        long aStartAddress = baseOffset + aFromIndex;
+        long bStartAddress = baseOffset + bFromIndex;
+        // If the start of the ranges have different alignments wrt 8-bytes, we can't vectorize.
+        if ((aStartAddress & ALIGNMENT_MASK) != (bStartAddress & ALIGNMENT_MASK)) {
+            for (i = 0; i < length; i++) {
+                if (a[aFromIndex + i] != b[bFromIndex + i]) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // Align to 8 bytes.
+        for (; ((baseOffset + aFromIndex + i) & ALIGNMENT_MASK) != 0 && i < length; i++) {
+            if (a[aFromIndex + i] != b[bFromIndex + i]) {
+                return false;
+            }
+        }
+
+        final int VECTOR_WIDTH_BYTES = 2 * Long.BYTES;
+        int limit = length - VECTOR_WIDTH_BYTES;
+        for (; i <= limit; i += VECTOR_WIDTH_BYTES) {
+            long aOffset = baseOffset + aFromIndex + i;
+            long bOffset = baseOffset + bFromIndex + i;
+            long l1 = unsafe.getLong(a, aOffset);
+            long l2 = unsafe.getLong(a, aOffset + Long.BYTES);
+            long l3 = unsafe.getLong(b, bOffset);
+            long l4 = unsafe.getLong(b, bOffset + Long.BYTES);
+            if (((l1 ^ l3) | (l2 ^ l4)) != 0) {
+                return false;
+            }
+        }
+
+        // Tail Loop: Remaining bytes.
+        for (; i < length; i++) {
+            if (a[aFromIndex + i] != b[bFromIndex + i]) {
                 return false;
             }
         }
         return true;
-        // END Android-changed: keep for-loop implementation due to the absence of ArraySupport
-        // intrinsics.
+        // END Android-changed: Vectorized equality check
     }
 
     /**
@@ -3107,23 +3196,11 @@ public final class Arrays {
         Unsafe unsafe = UNSAFE;
         final Class unused = unsafe.getClass(); // Hoist null check
         int i = 0;
-        if (!UNALIGNED_ACCESS_BOOLEAN) {
-            // Round up to 8 byte alignment if necessary.
-            if (length >= 4) {
-                // On 32-bit Android, the array base offset is often 12 (4-byte aligned).
-                // We can align to 8 bytes by reading a single int (4 booleans).
-                if (unsafe.getInt(a, BOOLEAN_ARRAY_BASE_OFFSET)
-                        != unsafe.getInt(a2, BOOLEAN_ARRAY_BASE_OFFSET)) {
-                    return false;
-                }
-                i += Integer.BYTES;
-            } else {
-                for (; i < length; i++) {
-                    if (a[i] != a2[i]) {
-                        return false;
-                    }
-                }
-                return true;
+        // Align to 8 bytes.
+        for (; (BOOLEAN_ARRAY_BASE_OFFSET + (long) i * 1 & ALIGNMENT_MASK) != 0
+                && i < length; i++) {
+            if (a[i] != a2[i]) {
+                return false;
             }
         }
 
@@ -3192,23 +3269,59 @@ public final class Arrays {
         if (aLength != bLength)
             return false;
 
-        // BEGIN Android-changed: keep for-loop implementation due to the absence of ArraySupport
-        // intrinsics.
-        // TODO(b/362153334) Assess whether it's worth writing intrinsics or not.
+        // BEGIN Android-changed: Vectorized equality check
         /*
         return ArraysSupport.mismatch(a, aFromIndex,
                                       b, bFromIndex,
                                       aLength) < 0;
         */
-        for (int idx = 0; idx < aLength; ++idx) {
-            if (a[aFromIndex++] != b[bFromIndex++]) {
+        int i = 0;
+        int length = aLength;
+        Unsafe unsafe = UNSAFE;
+        final Class unused = unsafe.getClass(); // Hoist null check
+        final long baseOffset = BOOLEAN_ARRAY_BASE_OFFSET;
+
+        long aStartAddress = baseOffset + aFromIndex;
+        long bStartAddress = baseOffset + bFromIndex;
+        // If the start of the ranges have different alignments wrt 8-bytes, we can't vectorize.
+        if ((aStartAddress & ALIGNMENT_MASK) != (bStartAddress & ALIGNMENT_MASK)) {
+            for (i = 0; i < length; i++) {
+                if (a[aFromIndex + i] != b[bFromIndex + i]) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // Align to 8 bytes.
+        for (; ((baseOffset + aFromIndex + i) & ALIGNMENT_MASK) != 0 && i < length; i++) {
+            if (a[aFromIndex + i] != b[bFromIndex + i]) {
                 return false;
             }
         }
 
+        final int VECTOR_WIDTH_BYTES = 2 * Long.BYTES;
+        int limit = length - VECTOR_WIDTH_BYTES;
+        for (; i <= limit; i += VECTOR_WIDTH_BYTES) {
+            long aOffset = baseOffset + aFromIndex + i;
+            long bOffset = baseOffset + bFromIndex + i;
+            long l1 = unsafe.getLong(a, aOffset);
+            long l2 = unsafe.getLong(a, aOffset + Long.BYTES);
+            long l3 = unsafe.getLong(b, bOffset);
+            long l4 = unsafe.getLong(b, bOffset + Long.BYTES);
+            if (((l1 ^ l3) | (l2 ^ l4)) != 0) {
+                return false;
+            }
+        }
+
+        // Tail Loop: Remaining bytes.
+        for (; i < length; i++) {
+            if (a[aFromIndex + i] != b[bFromIndex + i]) {
+                return false;
+            }
+        }
         return true;
-        // END Android-changed: keep for-loop implementation due to the absence of ArraySupport
-        // intrinsics.
+        // END Android-changed: Vectorized equality check
     }
 
     /**
@@ -3239,18 +3352,42 @@ public final class Arrays {
         if (a2.length != length)
             return false;
 
-        // BEGIN Android-changed: keep for-loop implementation due to the absence of ArraySupport
-        // intrinsics.
-        // TODO(b/362153334) Assess whether it's worth writing intrinsics or not.
+        // BEGIN Android-changed: Vectorized equality check
         // return ArraysSupport.mismatch(a, a2, length) < 0;
-        for (int idx = 0; idx < length; ++idx) {
-            if (Double.doubleToLongBits(a[idx]) != Double.doubleToLongBits(a2[idx])) {
+        int i = 0;
+        Unsafe unsafe = UNSAFE;
+        final Class unused = unsafe.getClass(); // Hoist null check
+        // Vectorized loop: double[] is always aligned.
+        final int VECTOR_WIDTH_BYTES = 2 * Long.BYTES;
+        int limit = length - (VECTOR_WIDTH_BYTES / Double.BYTES);
+        for (; i <= limit; i += (VECTOR_WIDTH_BYTES / Double.BYTES)) {
+            long offset = DOUBLE_ARRAY_BASE_OFFSET + (long) i * Double.BYTES;
+            long l1 = unsafe.getLong(a, offset);
+            long l2 = unsafe.getLong(a, offset + Long.BYTES);
+            long l3 = unsafe.getLong(a2, offset);
+            long l4 = unsafe.getLong(a2, offset + Long.BYTES);
+            if (((l1 ^ l3) | (l2 ^ l4)) != 0) {
+                // Mismatch found. Check for NaNs.
+                if (l1 != l3) {
+                    double d1 = Double.longBitsToDouble(l1);
+                    double d3 = Double.longBitsToDouble(l3);
+                    if (!Double.isNaN(d1) || !Double.isNaN(d3)) return false;
+                }
+                if (l2 != l4) {
+                    double d2 = Double.longBitsToDouble(l2);
+                    double d4 = Double.longBitsToDouble(l4);
+                    if (!Double.isNaN(d2) || !Double.isNaN(d4)) return false;
+                }
+            }
+        }
+
+        for (; i < length; i++) {
+            if (Double.doubleToLongBits(a[i]) != Double.doubleToLongBits(a2[i])) {
                 return false;
             }
         }
         return true;
-        // END Android-changed: keep for-loop implementation due to the absence of ArraySupport
-        // intrinsics.
+        // END Android-changed: Vectorized equality check
     }
 
     /**
@@ -3301,22 +3438,43 @@ public final class Arrays {
         if (aLength != bLength)
             return false;
 
-        // BEGIN Android-changed: keep for-loop implementation due to the absence of ArraySupport
-        // intrinsics.
-        // TODO(b/362153334) Assess whether it's worth writing intrinsics or not.
-        /*
-        return ArraysSupport.mismatch(a, aFromIndex,
-                                      b, bFromIndex, aLength) < 0;
-        */
-        for (int idx = 0; idx < aLength; ++idx) {
-            if (Double.doubleToLongBits(a[aFromIndex++]) !=
-                    Double.doubleToLongBits(b[bFromIndex++])) {
+        // BEGIN Android-changed: Vectorized equality check
+        // return ArraysSupport.mismatch(a, aFromIndex, b, bFromIndex, aLength) < 0;
+        int i = 0;
+        Unsafe unsafe = UNSAFE;
+        final Class unused = unsafe.getClass(); // Hoist null check
+        // Vectorized loop: double[] is always aligned.
+        final int VECTOR_WIDTH_BYTES = 2 * Long.BYTES;
+        int limit = aLength - (VECTOR_WIDTH_BYTES / Double.BYTES);
+        for (; i <= limit; i += (VECTOR_WIDTH_BYTES / Double.BYTES)) {
+            long offsetA = DOUBLE_ARRAY_BASE_OFFSET + (long) (aFromIndex + i) * Double.BYTES;
+            long offsetB = DOUBLE_ARRAY_BASE_OFFSET + (long) (bFromIndex + i) * Double.BYTES;
+            long l1 = unsafe.getLong(a, offsetA);
+            long l2 = unsafe.getLong(a, offsetA + Long.BYTES);
+            long l3 = unsafe.getLong(b, offsetB);
+            long l4 = unsafe.getLong(b, offsetB + Long.BYTES);
+            if (((l1 ^ l3) | (l2 ^ l4)) != 0) {
+                if (l1 != l3) {
+                    double d1 = Double.longBitsToDouble(l1);
+                    double d3 = Double.longBitsToDouble(l3);
+                    if (!Double.isNaN(d1) || !Double.isNaN(d3)) return false;
+                }
+                if (l2 != l4) {
+                    double d2 = Double.longBitsToDouble(l2);
+                    double d4 = Double.longBitsToDouble(l4);
+                    if (!Double.isNaN(d2) || !Double.isNaN(d4)) return false;
+                }
+            }
+        }
+
+        for (; i < aLength; i++) {
+            if (Double.doubleToLongBits(a[aFromIndex + i]) !=
+                    Double.doubleToLongBits(b[bFromIndex + i])) {
                 return false;
             }
         }
         return true;
-        // END Android-changed: keep for-loop implementation due to the absence of ArraySupport
-        // intrinsics.
+        // END Android-changed: Vectorized equality check
     }
 
     /**
@@ -3346,18 +3504,61 @@ public final class Arrays {
         int length = a.length;
         if (a2.length != length)
             return false;
-        // BEGIN Android-changed: keep for-loop implementation due to the absence of ArraySupport
-        // intrinsics.
-        // TODO(b/362153334) Assess whether it's worth writing intrinsics or not.
+
+        // BEGIN Android-changed: Vectorized equality check
         // return ArraysSupport.mismatch(a, a2, length) < 0;
-        for (int idx = 0; idx < length; ++idx) {
-            if (Float.floatToIntBits(a[idx]) != Float.floatToIntBits(a2[idx])) {
+        Unsafe unsafe = UNSAFE;
+        final Class unused = unsafe.getClass(); // Hoist null check
+        int i = 0;
+        // Align to 8 bytes.
+        for (; (FLOAT_ARRAY_BASE_OFFSET + (long) i * Float.BYTES & ALIGNMENT_MASK) != 0
+                && i < length; i++) {
+            if (Float.floatToIntBits(a[i]) != Float.floatToIntBits(a2[i])) {
+                return false;
+            }
+        }
+
+        // Vectorized loop: compare 16 bytes at a time
+        final int VECTOR_WIDTH_BYTES = 2 * Long.BYTES;
+        int limit = length - (VECTOR_WIDTH_BYTES / Float.BYTES);
+        for (; i <= limit; i += (VECTOR_WIDTH_BYTES / Float.BYTES)) {
+            long offset = FLOAT_ARRAY_BASE_OFFSET + (long) i * Float.BYTES;
+            long l1 = unsafe.getLong(a, offset);
+            long l2 = unsafe.getLong(a, offset + Long.BYTES);
+            long l3 = unsafe.getLong(a2, offset);
+            long l4 = unsafe.getLong(a2, offset + Long.BYTES);
+            if (((l1 ^ l3) | (l2 ^ l4)) != 0) {
+                // Mismatch found. Check for NaNs.
+                if (l1 != l3) {
+                    int i1a = (int) l1;
+                    int i1b = (int) l3;
+                    int i2a = (int) (l1 >>> 32);
+                    int i2b = (int) (l3 >>> 32);
+                    if (i1a != i1b && (!Float.isNaN(Float.intBitsToFloat(i1a))
+                            || !Float.isNaN(Float.intBitsToFloat(i1b)))) return false;
+                    if (i2a != i2b && (!Float.isNaN(Float.intBitsToFloat(i2a))
+                            || !Float.isNaN(Float.intBitsToFloat(i2b)))) return false;
+                }
+                if (l2 != l4) {
+                    int i3a = (int) l2;
+                    int i3b = (int) l4;
+                    int i4a = (int) (l2 >>> 32);
+                    int i4b = (int) (l4 >>> 32);
+                    if (i3a != i3b && (!Float.isNaN(Float.intBitsToFloat(i3a))
+                            || !Float.isNaN(Float.intBitsToFloat(i3b)))) return false;
+                    if (i4a != i4b && (!Float.isNaN(Float.intBitsToFloat(i4a))
+                            || !Float.isNaN(Float.intBitsToFloat(i4b)))) return false;
+                }
+            }
+        }
+
+        for (; i < length; i++) {
+            if (Float.floatToIntBits(a[i]) != Float.floatToIntBits(a2[i])) {
                 return false;
             }
         }
         return true;
-        // END Android-changed: keep for-loop implementation due to the absence of ArraySupport
-        // intrinsics.
+        // END Android-changed: Vectorized equality check
     }
 
     /**
@@ -3408,21 +3609,78 @@ public final class Arrays {
         if (aLength != bLength)
             return false;
 
-        // BEGIN Android-changed: keep for-loop implementation due to the absence of ArraySupport
-        // intrinsics.
-        // TODO(b/362153334) Assess whether it's worth writing intrinsics or not.
-        /*
-        return ArraysSupport.mismatch(a, aFromIndex,
-                                      b, bFromIndex, aLength) < 0;
-        */
-        for (int idx = 0; idx < aLength; ++idx) {
-            if (Float.floatToIntBits(a[aFromIndex++]) != Float.floatToIntBits(b[bFromIndex++])) {
+        // BEGIN Android-changed: Vectorized equality check
+        // return ArraysSupport.mismatch(a, aFromIndex, b, bFromIndex, aLength) < 0;
+        int i = 0;
+        int length = aLength;
+        Unsafe unsafe = UNSAFE;
+        final Class unused = unsafe.getClass(); // Hoist null check
+        final long baseOffset = FLOAT_ARRAY_BASE_OFFSET;
+
+        // If the start of the ranges have different alignments wrt 8-bytes, we can't vectorize.
+        if ((((baseOffset + (long) aFromIndex * Float.BYTES) & ALIGNMENT_MASK) !=
+                ((baseOffset + (long) bFromIndex * Float.BYTES) & ALIGNMENT_MASK))) {
+            for (i = 0; i < length; i++) {
+                if (Float.floatToIntBits(a[aFromIndex + i])
+                        != Float.floatToIntBits(b[bFromIndex + i])) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // Align to 8 bytes.
+        for (; ((baseOffset + (long) (aFromIndex + i) * Float.BYTES) & ALIGNMENT_MASK) != 0
+                && i < length; i++) {
+            if (Float.floatToIntBits(a[aFromIndex + i])
+                    != Float.floatToIntBits(b[bFromIndex + i])) {
+                return false;
+            }
+        }
+
+        // Vectorized loop: compare 16 bytes at a time
+        final int VECTOR_WIDTH_BYTES = 2 * Long.BYTES;
+        int limit = length - (VECTOR_WIDTH_BYTES / Float.BYTES);
+        for (; i <= limit; i += (VECTOR_WIDTH_BYTES / Float.BYTES)) {
+            long offsetA = FLOAT_ARRAY_BASE_OFFSET + (long) (aFromIndex + i) * Float.BYTES;
+            long offsetB = FLOAT_ARRAY_BASE_OFFSET + (long) (bFromIndex + i) * Float.BYTES;
+            long l1 = unsafe.getLong(a, offsetA);
+            long l2 = unsafe.getLong(a, offsetA + Long.BYTES);
+            long l3 = unsafe.getLong(b, offsetB);
+            long l4 = unsafe.getLong(b, offsetB + Long.BYTES);
+            if (((l1 ^ l3) | (l2 ^ l4)) != 0) {
+                // Mismatch found. Check for NaNs.
+                if (l1 != l3) {
+                    int i1a = (int) l1;
+                    int i1b = (int) l3;
+                    int i2a = (int) (l1 >>> 32);
+                    int i2b = (int) (l3 >>> 32);
+                    if (i1a != i1b && (!Float.isNaN(Float.intBitsToFloat(i1a))
+                            || !Float.isNaN(Float.intBitsToFloat(i1b)))) return false;
+                    if (i2a != i2b && (!Float.isNaN(Float.intBitsToFloat(i2a))
+                            || !Float.isNaN(Float.intBitsToFloat(i2b)))) return false;
+                }
+                if (l2 != l4) {
+                    int i3a = (int) l2;
+                    int i3b = (int) l4;
+                    int i4a = (int) (l2 >>> 32);
+                    int i4b = (int) (l4 >>> 32);
+                    if (i3a != i3b && (!Float.isNaN(Float.intBitsToFloat(i3a))
+                            || !Float.isNaN(Float.intBitsToFloat(i3b)))) return false;
+                    if (i4a != i4b && (!Float.isNaN(Float.intBitsToFloat(i4a))
+                            || !Float.isNaN(Float.intBitsToFloat(i4b)))) return false;
+                }
+            }
+        }
+
+        for (; i < length; i++) {
+            if (Float.floatToIntBits(a[aFromIndex + i])
+                    != Float.floatToIntBits(b[bFromIndex + i])) {
                 return false;
             }
         }
         return true;
-        // END Android-changed: keep for-loop implementation due to the absence of ArraySupport
-        // intrinsics.
+        // END Android-changed: Vectorized equality check
     }
 
     /**
@@ -3966,8 +4224,8 @@ public final class Arrays {
      * is greater than that of the original array.
      * The resulting array is of the class {@code newType}.
      *
-     * @param <U> the class of the objects in the original array
      * @param <T> the class of the objects in the returned array
+     * @param <U> the class of the objects in the original array
      * @param original the array to be copied
      * @param newLength the length of the copy to be returned
      * @param newType the class of the copy to be returned
@@ -4281,8 +4539,8 @@ public final class Arrays {
      * of the returned array will be {@code to - from}.
      * The resulting array is of the class {@code newType}.
      *
-     * @param <U> the class of the objects in the original array
      * @param <T> the class of the objects in the returned array
+     * @param <U> the class of the objects in the original array
      * @param original the array from which a range is to be copied
      * @param from the initial index of the range to be copied, inclusive
      * @param to the final index of the range to be copied, exclusive.
@@ -4302,8 +4560,9 @@ public final class Arrays {
     @IntrinsicCandidate
     public static <T,U> T[] copyOfRange(U[] original, int from, int to, Class<? extends T[]> newType) {
         int newLength = to - from;
-        if (newLength < 0)
+        if (newLength < 0) {
             throw new IllegalArgumentException(from + " > " + to);
+        }
         @SuppressWarnings("unchecked")
         T[] copy = ((Object)newType == (Object)Object[].class)
             ? (T[]) new Object[newLength]
@@ -4311,13 +4570,6 @@ public final class Arrays {
         System.arraycopy(original, from, copy, 0,
                          Math.min(original.length - from, newLength));
         return copy;
-    }
-
-    @ForceInline
-    private static void checkLength(int from, int to) {
-        if (to < from) {
-            throw new IllegalArgumentException(from + " > " + to);
-        }
     }
 
     /**
@@ -4347,24 +4599,19 @@ public final class Arrays {
      * @since 1.6
      */
     public static byte[] copyOfRange(byte[] original, int from, int to) {
-        // Tickle the JIT to fold special cases optimally
         // Android-changed: TODO(b/359517996) .clone() is slower than System.arraycopy.
         /*
-        if (from != 0 || to != original.length)
-            return copyOfRangeByte(original, from, to);
-        else // from == 0 && to == original.length
+        if (from == 0 && to == original.length) {
             return original.clone();
+        }
         */
-        return copyOfRangeByte(original, from, to);
-    }
-
-    @ForceInline
-    private static byte[] copyOfRangeByte(byte[] original, int from, int to) {
-        checkLength(from, to);
         int newLength = to - from;
+        if (newLength < 0) {
+            throw new IllegalArgumentException(from + " > " + to);
+        }
         byte[] copy = new byte[newLength];
         System.arraycopy(original, from, copy, 0,
-                         Math.min(original.length - from, newLength));
+                Math.min(original.length - from, newLength));
         return copy;
     }
 
@@ -4395,21 +4642,16 @@ public final class Arrays {
      * @since 1.6
      */
     public static short[] copyOfRange(short[] original, int from, int to) {
-        // Tickle the JIT to fold special cases optimally
         // Android-changed: TODO(b/359517996) .clone() is slower than System.arraycopy.
         /*
-        if (from != 0 || to != original.length)
-            return copyOfRangeShort(original, from, to);
-        else // from == 0 && to == original.length
+        if (from == 0 && to == original.length) {
             return original.clone();
+        }
         */
-        return copyOfRangeShort(original, from, to);
-    }
-
-    @ForceInline
-    private static short[] copyOfRangeShort(short[] original, int from, int to) {
-        checkLength(from, to);
         int newLength = to - from;
+        if (newLength < 0) {
+            throw new IllegalArgumentException(from + " > " + to);
+        }
         short[] copy = new short[newLength];
         System.arraycopy(original, from, copy, 0,
                          Math.min(original.length - from, newLength));
@@ -4443,21 +4685,16 @@ public final class Arrays {
      * @since 1.6
      */
     public static int[] copyOfRange(int[] original, int from, int to) {
-        // Tickle the JIT to fold special cases optimally
         // Android-changed: TODO(b/359517996) .clone() is slower than System.arraycopy.
         /*
-        if (from != 0 || to != original.length)
-            return copyOfRangeInt(original, from, to);
-        else // from == 0 && to == original.length
+        if (from == 0 && to == original.length) {
             return original.clone();
+        }
         */
-        return copyOfRangeInt(original, from, to);
-    }
-
-    @ForceInline
-    private static int[] copyOfRangeInt(int[] original, int from, int to) {
-        checkLength(from, to);
         int newLength = to - from;
+        if (newLength < 0) {
+            throw new IllegalArgumentException(from + " > " + to);
+        }
         int[] copy = new int[newLength];
         System.arraycopy(original, from, copy, 0,
                          Math.min(original.length - from, newLength));
@@ -4491,21 +4728,16 @@ public final class Arrays {
      * @since 1.6
      */
     public static long[] copyOfRange(long[] original, int from, int to) {
-        // Tickle the JIT to fold special cases optimally
         // Android-changed: TODO(b/359517996) .clone() is slower than System.arraycopy.
         /*
-        if (from != 0 || to != original.length)
-            return copyOfRangeLong(original, from, to);
-        else // from == 0 && to == original.length
+        if (from == 0 && to == original.length) {
             return original.clone();
+        }
         */
-        return copyOfRangeLong(original, from, to);
-    }
-
-    @ForceInline
-    private static long[] copyOfRangeLong(long[] original, int from, int to) {
-        checkLength(from, to);
         int newLength = to - from;
+        if (newLength < 0) {
+            throw new IllegalArgumentException(from + " > " + to);
+        }
         long[] copy = new long[newLength];
         System.arraycopy(original, from, copy, 0,
                          Math.min(original.length - from, newLength));
@@ -4539,22 +4771,16 @@ public final class Arrays {
      * @since 1.6
      */
     public static char[] copyOfRange(char[] original, int from, int to) {
-        // Tickle the JIT to fold special cases optimally
         // Android-changed: TODO(b/359517996) .clone() is slower than System.arraycopy.
         /*
-        if (from != 0 || to != original.length)
-            return copyOfRangeChar(original, from, to);
-        else // from == 0 && to == original.length
+        if (from == 0 && to == original.length) {
             return original.clone();
+        }
         */
-        return copyOfRangeChar(original, from, to);
-    }
-
-
-    @ForceInline
-    private static char[] copyOfRangeChar(char[] original, int from, int to) {
-        checkLength(from, to);
         int newLength = to - from;
+        if (newLength < 0) {
+            throw new IllegalArgumentException(from + " > " + to);
+        }
         char[] copy = new char[newLength];
         System.arraycopy(original, from, copy, 0,
                          Math.min(original.length - from, newLength));
@@ -4588,22 +4814,16 @@ public final class Arrays {
      * @since 1.6
      */
     public static float[] copyOfRange(float[] original, int from, int to) {
-        // Tickle the JIT to fold special cases optimally
         // Android-changed: TODO(b/359517996) .clone() is slower than System.arraycopy.
         /*
-        if (from != 0 || to != original.length)
-            return copyOfRangeFloat(original, from, to);
-        else // from == 0 && to == original.length
+        if (from == 0 && to == original.length) {
             return original.clone();
+        }
         */
-        return copyOfRangeFloat(original, from, to);
-    }
-
-
-    @ForceInline
-    private static float[] copyOfRangeFloat(float[] original, int from, int to) {
-        checkLength(from, to);
         int newLength = to - from;
+        if (newLength < 0) {
+            throw new IllegalArgumentException(from + " > " + to);
+        }
         float[] copy = new float[newLength];
         System.arraycopy(original, from, copy, 0,
                          Math.min(original.length - from, newLength));
@@ -4637,22 +4857,16 @@ public final class Arrays {
      * @since 1.6
      */
     public static double[] copyOfRange(double[] original, int from, int to) {
-        // Tickle the JIT to fold special cases optimally
         // Android-changed: TODO(b/359517996) .clone() is slower than System.arraycopy.
         /*
-        if (from != 0 || to != original.length)
-            return copyOfRangeDouble(original, from, to);
-        else // from == 0 && to == original.length
+        if (from == 0 && to == original.length) {
             return original.clone();
+        }
         */
-        return copyOfRangeDouble(original, from, to);
-    }
-
-
-    @ForceInline
-    private static double[] copyOfRangeDouble(double[] original, int from, int to) {
-        checkLength(from, to);
         int newLength = to - from;
+        if (newLength < 0) {
+            throw new IllegalArgumentException(from + " > " + to);
+        }
         double[] copy = new double[newLength];
         System.arraycopy(original, from, copy, 0,
                          Math.min(original.length - from, newLength));
@@ -4686,22 +4900,16 @@ public final class Arrays {
      * @since 1.6
      */
     public static boolean[] copyOfRange(boolean[] original, int from, int to) {
-        // Tickle the JIT to fold special cases optimally
         // Android-changed: TODO(b/359517996) .clone() is slower than System.arraycopy.
         /*
-        if (from != 0 || to != original.length)
-            return copyOfRangeBoolean(original, from, to);
-        else // from == 0 && to == original.length
+        if (from == 0 && to == original.length) {
             return original.clone();
+        }
         */
-        return copyOfRangeBoolean(original, from, to);
-    }
-
-
-    @ForceInline
-    private static boolean[] copyOfRangeBoolean(boolean[] original, int from, int to) {
-        checkLength(from, to);
         int newLength = to - from;
+        if (newLength < 0) {
+            throw new IllegalArgumentException(from + " > " + to);
+        }
         boolean[] copy = new boolean[newLength];
         System.arraycopy(original, from, copy, 0,
                          Math.min(original.length - from, newLength));
@@ -4782,6 +4990,8 @@ public final class Arrays {
     {
         @java.io.Serial
         private static final long serialVersionUID = -2764017481108945198L;
+        /** @serial */
+        @SuppressWarnings("serial") // Conditionally serializable
         private final E[] a;
 
         ArrayList(E[] array) {
@@ -4938,8 +5148,7 @@ public final class Arrays {
         }
         int result = 1;
         for (long element : a) {
-            int elementHash = (int)(element ^ (element >>> 32));
-            result = 31 * result + elementHash;
+            result = 31 * result + Long.hashCode(element);
         }
         return result;
     }
@@ -4964,11 +5173,7 @@ public final class Arrays {
         if (a == null) {
             return 0;
         }
-        return switch (a.length) {
-            case 0 -> 1;
-            case 1 -> 31 + a[0];
-            default -> ArraysSupport.vectorizedHashCode(a, 0, a.length, 1, ArraysSupport.T_INT);
-        };
+        return ArraysSupport.hashCode(a, 0, a.length, 1);
     }
 
     /**
@@ -4991,11 +5196,7 @@ public final class Arrays {
         if (a == null) {
             return 0;
         }
-        return switch (a.length) {
-            case 0 -> 1;
-            case 1 -> 31 + (int)a[0];
-            default -> ArraysSupport.vectorizedHashCode(a, 0, a.length, 1, ArraysSupport.T_SHORT);
-        };
+        return ArraysSupport.hashCode(a, 0, a.length, 1);
     }
 
     /**
@@ -5018,11 +5219,7 @@ public final class Arrays {
         if (a == null) {
             return 0;
         }
-        return switch (a.length) {
-            case 0 -> 1;
-            case 1 -> 31 + (int)a[0];
-            default -> ArraysSupport.vectorizedHashCode(a, 0, a.length, 1, ArraysSupport.T_CHAR);
-        };
+        return ArraysSupport.hashCode(a, 0, a.length, 1);
     }
 
     /**
@@ -5045,11 +5242,7 @@ public final class Arrays {
         if (a == null) {
             return 0;
         }
-        return switch (a.length) {
-            case 0 -> 1;
-            case 1 -> 31 + (int)a[0];
-            default -> ArraysSupport.vectorizedHashCode(a, 0, a.length, 1, ArraysSupport.T_BYTE);
-        };
+        return ArraysSupport.hashCode(a, 0, a.length, 1);
     }
 
     /**
@@ -5074,7 +5267,7 @@ public final class Arrays {
 
         int result = 1;
         for (boolean element : a)
-            result = 31 * result + (element ? 1231 : 1237);
+            result = 31 * result + Boolean.hashCode(element);
 
         return result;
     }
@@ -5101,7 +5294,7 @@ public final class Arrays {
 
         int result = 1;
         for (float element : a)
-            result = 31 * result + Float.floatToIntBits(element);
+            result = 31 * result + Float.hashCode(element);
 
         return result;
     }
@@ -5128,8 +5321,7 @@ public final class Arrays {
 
         int result = 1;
         for (double element : a) {
-            long bits = Double.doubleToLongBits(element);
-            result = 31 * result + (int)(bits ^ (bits >>> 32));
+            result = 31 * result + Double.hashCode(element);
         }
         return result;
     }
@@ -5156,15 +5348,10 @@ public final class Arrays {
      * @since 1.5
      */
     public static int hashCode(Object[] a) {
-        if (a == null)
+        if (a == null) {
             return 0;
-
-        int result = 1;
-
-        for (Object element : a)
-            result = 31 * result + (element == null ? 0 : element.hashCode());
-
-        return result;
+        }
+        return ArraysSupport.hashCode(a, 0, a.length, 1);
     }
 
     /**
