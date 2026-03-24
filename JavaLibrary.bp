@@ -101,6 +101,9 @@ rewrite_openjdk_doc_links = "sed -E 's" +
     "!(\\{@docRoot\\}/\\.\\./|[./]+)((platform|technotes).+)\">" +
     "!https://docs.oracle.com/javase/8/docs/\\2\">!' " +
     "$(in) " +
+    "| sed -E 's" + // doc-files are not hosted and these links can also have java.base in them.
+    "!(\\{@docRoot\\}/)(.*doc\\-files.*)\">" +
+    "!https://docs.oracle.com/en/java/javase/17/docs/api/\\2\">!'" +
     "| sed -E 's" + // Android doesn't have java.base in the API docs
     "!(\\{@docRoot\\}/)(java\\.base/)(.+)\">" +
     "!\\1reference/\\3\">!' " +
@@ -700,6 +703,9 @@ java_library_static {
         "//libcore:__subpackages__",
         "//frameworks/base/tests/PlatformCompatGating/test-rules",
         "//libcore:__subpackages__",
+        // Linking platform-compat-test-rules to Bluetooth causes runtime test failures
+        // (b/485180748).
+        "//packages/modules/Bluetooth:__subpackages__",
     ],
     srcs: [
         "luni/src/main/java/android/compat/**/*.java",
@@ -1257,6 +1263,7 @@ java_aconfig_library {
     visibility: [
         "//art:__subpackages__",
         "//libcore:__subpackages__",
+        "//cts:__subpackages__",
     ],
 }
 

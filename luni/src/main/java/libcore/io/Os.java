@@ -536,6 +536,11 @@ public interface Os {
     /**
      * @hide
      */
+    public int readNoThrow(FileDescriptor fd, byte[] bytes, int byteOffset, int byteCount);
+
+    /**
+     * @hide
+     */
     public String readlink(String path) throws ErrnoException;
 
     /**
@@ -561,7 +566,17 @@ public interface Os {
     /**
      * @hide
      */
+    public int recvfromNoThrow(FileDescriptor fd, byte[] bytes, int byteOffset, int byteCount, int flags, InetSocketAddress srcAddress);
+
+    /**
+     * @hide
+     */
     public int recvmsg(FileDescriptor fd, StructMsghdr msg, int flags) throws ErrnoException, SocketException;
+
+    /**
+     * @hide
+     */
+    public int recvmsgNoThrow(FileDescriptor fd, StructMsghdr msg, int flags);
 
     /**
      * @hide
