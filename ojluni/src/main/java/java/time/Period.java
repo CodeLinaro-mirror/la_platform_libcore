@@ -88,7 +88,6 @@ import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-// Android-changed: removed ValueBased paragraph.
 /**
  * A date-based amount of time in the ISO-8601 calendar system,
  * such as '2 years, 3 months and 4 days'.
@@ -118,12 +117,20 @@ import java.util.regex.Pattern;
  * <p>
  * The period is modeled as a directed amount of time, meaning that individual parts of the
  * period may be negative.
+ * <p>
+ * This is a <a href="{@docRoot}/java.base/java/lang/doc-files/ValueBased.html">value-based</a>
+ * class; programmers should treat instances that are
+ * {@linkplain #equals(Object) equal} as interchangeable and should not
+ * use instances for synchronization, or unpredictable behavior may
+ * occur. For example, in a future release, synchronization may fail.
+ * The {@code equals} method should be used for comparisons.
  *
  * @implSpec
  * This class is immutable and thread-safe.
  *
  * @since 1.8
  */
+@jdk.internal.ValueBased
 public final class Period
         implements ChronoPeriod, Serializable {
 
