@@ -81,8 +81,7 @@ import jdk.internal.vm.annotation.IntrinsicCandidate;
  * @since   1.8
  */
 
-// Android-changed: removed final modifier.
-public /* final */ class Base64 {
+public final class Base64 {
 
     private Base64() {}
 
