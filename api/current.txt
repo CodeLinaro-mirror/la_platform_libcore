@@ -13662,7 +13662,7 @@ package java.util {
     method @NonNull public static String toString(@Nullable short[]);
   }
 
-  public final class Base64 {
+  public class Base64 {
     method public static java.util.Base64.Decoder getDecoder();
     method public static java.util.Base64.Encoder getEncoder();
     method public static java.util.Base64.Decoder getMimeDecoder();
