@@ -192,11 +192,15 @@ static bool isIPv4MappedAddress(const sockaddr *sa) {
  * a close() or Thread.interrupt(). Other signals that result in an EINTR result are ignored and the
  * system call is retried.
  *
- * Returns the result of the system call though a Java exception will be pending if the result is
- * -1: an IOException if the file descriptor is already closed, a InterruptedIOException if signaled
- * via AsynchronousCloseMonitor, or ErrnoException for other failures.
+ * IO_FAILURE_RETRY returns the result of the system call though a Java exception will be pending
+ * if the result is -1: a InterruptedIOException if signaled via AsynchronousCloseMonitor,
+ * or ErrnoException for other failures.
+ *
+ * IO_FAILURE_RETRY_NOTHROW returns the result of the system call or -1 on failure. In case of
+ * failure, errno is set to the error code. If the operation was interrupted by an asynchronous
+ * close, errno is set to EBADF to indicate the file descriptor is no longer valid.
  */
-#define IO_FAILURE_RETRY(jni_env, return_type, syscall_name, java_fd, ...) ({ \
+#define IO_FAILURE_RETRY_IMPL(jni_env, return_type, syscall_name, java_fd, should_throw, ...) ({ \
     return_type _rc = -1; \
     int _syscallErrno; \
     do { \
@@ -209,14 +213,20 @@ static bool isIPv4MappedAddress(const sockaddr *sa) {
             _wasSignaled = _monitor.wasSignaled(); \
         } \
         if (_wasSignaled) { \
-            jniThrowException(jni_env, "java/io/InterruptedIOException", \
-                # syscall_name " interrupted by close() on another thread"); \
+            if (should_throw) { \
+                jniThrowException(jni_env, "java/io/InterruptedIOException", \
+                    # syscall_name " interrupted by close() on another thread"); \
+            } else { \
+                _syscallErrno = EBADF; \
+            } \
             _rc = -1; \
             break; \
         } \
         if (_rc == -1 && _syscallErrno != EINTR) { \
-            /* TODO: with a format string we could show the arguments too, like strace(1). */ \
-            throwErrnoException(jni_env, # syscall_name); \
+            if (should_throw) { \
+                /* TODO: with a format string we could show the arguments too, like strace(1). */ \
+                throwErrnoException(jni_env, # syscall_name); \
+            } \
             break; \
         } \
     } while (_rc == -1); /* && _syscallErrno == EINTR && !_wasSignaled */ \
@@ -225,6 +235,12 @@ static bool isIPv4MappedAddress(const sockaddr *sa) {
         errno = _syscallErrno; \
     } \
     _rc; })
+
+#define IO_FAILURE_RETRY(jni_env, return_type, syscall_name, java_fd, ...) \
+    IO_FAILURE_RETRY_IMPL(jni_env, return_type, syscall_name, java_fd, true, __VA_ARGS__)
+
+#define IO_FAILURE_RETRY_NOTHROW(jni_env, return_type, syscall_name, java_fd, ...) \
+    IO_FAILURE_RETRY_IMPL(jni_env, return_type, syscall_name, java_fd, false, __VA_ARGS__)
 
 #define NULL_ADDR_OK         true
 #define NULL_ADDR_FORBIDDEN  false
@@ -2147,6 +2163,19 @@ static jint Linux_readBytes(JNIEnv* env, jobject, jobject javaFd, jobject javaBy
     return IO_FAILURE_RETRY(env, ssize_t, read, javaFd, bytes.get() + byteOffset, byteCount);
 }
 
+static jint Linux_readNoThrow(JNIEnv* env, jobject, jobject javaFd, jbyteArray javaBytes, jint byteOffset, jint byteCount) {
+    ScopedBytesRW bytes(env, javaBytes);
+    if (bytes.get() == NULL) {
+        return -EFAULT;
+    }
+    ssize_t rc = IO_FAILURE_RETRY_NOTHROW(env, ssize_t, read, javaFd, bytes.get() + byteOffset, byteCount);
+
+    if (rc == -1) {
+        return -errno;
+    }
+    return static_cast<jint>(rc);
+}
+
 static jstring Linux_readlink(JNIEnv* env, jobject, jstring javaPath) {
     ScopedUtfChars path(env, javaPath);
     if (path.c_str() == NULL) {
@@ -2205,6 +2234,27 @@ static jint Linux_recvfromBytes(JNIEnv* env, jobject, jobject javaFd, jobject ja
     return recvCount;
 }
 
+static jint Linux_recvfromNoThrow(JNIEnv* env, jobject, jobject javaFd, jbyteArray javaBytes, jint byteOffset, jint byteCount, jint flags, jobject javaInetSocketAddress) {
+    ScopedBytesRW bytes(env, javaBytes);
+    if (bytes.get() == NULL) {
+        return -EFAULT;
+    }
+    sockaddr_storage ss = {};
+    socklen_t sl = sizeof(ss);
+    sockaddr* from = (javaInetSocketAddress != NULL) ? reinterpret_cast<sockaddr*>(&ss) : NULL;
+    socklen_t* fromLength = (javaInetSocketAddress != NULL) ? &sl : 0;
+
+    ssize_t rc = IO_FAILURE_RETRY_NOTHROW(env, ssize_t, recvfrom, javaFd, bytes.get() + byteOffset, byteCount, flags, from, fromLength);
+
+    if (rc == -1) {
+        return -errno;
+    }
+    if (ss.ss_family == AF_INET || ss.ss_family == AF_INET6) {
+        fillInetSocketAddress(env, javaInetSocketAddress, ss);
+    }
+    return static_cast<jint>(rc);
+}
+
 static jint Linux_recvmsg(JNIEnv* env, jobject, jobject javaFd, jobject structMsghdr, jint flags) {
     ssize_t rc = -1;
     ScopedMsghdr scopedMsghdrValue;
@@ -2260,6 +2310,49 @@ static jint Linux_recvmsg(JNIEnv* env, jobject, jobject javaFd, jobject structMs
     return rc;
 }
 
+
+static jint Linux_recvmsgNoThrow(JNIEnv* env, jobject, jobject javaFd, jobject structMsghdr, jint flags) {
+    ScopedMsghdr scopedMsghdrValue;
+    ScopedByteBufferArray scopedBytesArray(env, true);
+    sockaddr_storage ss = {};
+
+    static jfieldID msgNameFid = env->GetFieldID(JniConstants::GetStructMsghdrClass(env),
+                                                  "msg_name", "Ljava/net/SocketAddress;");
+    if (!msgNameFid) {
+        return -EINVAL;
+    }
+
+    // Initialize msghdr with everything from StructCMsghdr except msg_name.
+    if (msghdrJavaToC(env, structMsghdr, scopedMsghdrValue.getObject(),
+                           scopedBytesArray) == false) {
+        return -EINVAL;
+    }
+
+    jobject javaSocketAddress = env->GetObjectField(structMsghdr, msgNameFid);
+    if (javaSocketAddress) {
+        // client want to get source address, then set msg_name and msg_namelen.
+        scopedMsghdrValue.setMsgNameAndLen(reinterpret_cast<sockaddr*>(&ss),
+                                              sizeof(sockaddr_in6));
+    }
+
+    ssize_t rc = IO_FAILURE_RETRY_NOTHROW(env, ssize_t, recvmsg, javaFd, &scopedMsghdrValue.getObject(), flags);
+
+    if (rc == -1) {
+        return -errno;
+    }
+
+    if (javaSocketAddress) {
+        sockaddr_storage* interfaceAddr = NULL;
+        interfaceAddr = reinterpret_cast<sockaddr_storage*>(scopedMsghdrValue.getObject().msg_name);
+        fillSocketAddress(env, javaSocketAddress, *interfaceAddr,
+                scopedMsghdrValue.getObject().msg_namelen);
+    }
+
+    msghdrCToJava(env, structMsghdr, scopedMsghdrValue.getObject(),
+                            scopedBytesArray);
+
+    return static_cast<jint>(rc);
+}
 
 static void Linux_remove(JNIEnv* env, jobject, jstring javaPath) {
     ScopedUtfChars path(env, javaPath);
@@ -2864,11 +2957,14 @@ static JNINativeMethod gMethods[] = {
     NATIVE_METHOD(Linux, preadBytes, "(Ljava/io/FileDescriptor;Ljava/lang/Object;IIJ)I"),
     NATIVE_METHOD(Linux, pwriteBytes, "(Ljava/io/FileDescriptor;Ljava/lang/Object;IIJ)I"),
     NATIVE_METHOD(Linux, readBytes, "(Ljava/io/FileDescriptor;Ljava/lang/Object;II)I"),
+    NATIVE_METHOD(Linux, readNoThrow, "(Ljava/io/FileDescriptor;[BII)I"),
     NATIVE_METHOD(Linux, readlink, "(Ljava/lang/String;)Ljava/lang/String;"),
     NATIVE_METHOD(Linux, realpath, "(Ljava/lang/String;)Ljava/lang/String;"),
     NATIVE_METHOD(Linux, readv, "(Ljava/io/FileDescriptor;[Ljava/lang/Object;[I[I)I"),
     NATIVE_METHOD(Linux, recvfromBytes, "(Ljava/io/FileDescriptor;Ljava/lang/Object;IIILjava/net/InetSocketAddress;)I"),
+    NATIVE_METHOD(Linux, recvfromNoThrow, "(Ljava/io/FileDescriptor;[BIIILjava/net/InetSocketAddress;)I"),
     NATIVE_METHOD(Linux, recvmsg, "(Ljava/io/FileDescriptor;Landroid/system/StructMsghdr;I)I"),
+    NATIVE_METHOD(Linux, recvmsgNoThrow, "(Ljava/io/FileDescriptor;Landroid/system/StructMsghdr;I)I"),
     NATIVE_METHOD(Linux, remove, "(Ljava/lang/String;)V"),
     NATIVE_METHOD(Linux, removexattr, "(Ljava/lang/String;Ljava/lang/String;)V"),
     NATIVE_METHOD(Linux, rename, "(Ljava/lang/String;Ljava/lang/String;)V"),

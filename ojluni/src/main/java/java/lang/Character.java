@@ -128,13 +128,11 @@ import libcore.icu.ICU;
  * encoding. For more information on Unicode terminology, refer to the
  * <a href="http://www.unicode.org/glossary/">Unicode Glossary</a>.
  *
- * <!-- Android-removed: paragraph on ValueBased
  * <p>This is a <a href="{@docRoot}/java.base/java/lang/doc-files/ValueBased.html">value-based</a>
  * class; programmers should treat instances that are
  * {@linkplain #equals(Object) equal} as interchangeable and should not
  * use instances for synchronization, or unpredictable behavior may
  * occur. For example, in a future release, synchronization may fail.
- * -->
  *
  * @spec https://www.unicode.org/reports/tr27 Unicode 3.1.0
  * @author  Lee Boynton
@@ -11940,8 +11938,8 @@ class Character implements java.io.Serializable, Comparable<Character>, Constabl
         if (codePoint < 0x1000) {
             return false;
         }
-        // OGHAM SPACE MARK or MONGOLIAN VOWEL SEPARATOR?
-        if (codePoint == 0x1680 || codePoint == 0x180e) {
+        // OGHAM SPACE MARK?
+        if (codePoint == 0x1680) {
             return true;
         }
         if (codePoint < 0x2000) {
@@ -12037,8 +12035,8 @@ class Character implements java.io.Serializable, Comparable<Character>, Constabl
         if (codePoint < 0x1000) {
             return false;
         }
-        // OGHAM SPACE MARK or MONGOLIAN VOWEL SEPARATOR?
-        if (codePoint == 0x1680 || codePoint == 0x180e) {
+        // OGHAM SPACE MARK?
+        if (codePoint == 0x1680) {
             return true;
         }
         if (codePoint < 0x2000) {

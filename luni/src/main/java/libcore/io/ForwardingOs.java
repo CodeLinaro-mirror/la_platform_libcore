@@ -631,6 +631,11 @@ public class ForwardingOs implements Os {
     /**
      * @hide
      */
+    public int readNoThrow(FileDescriptor fd, byte[] bytes, int byteOffset, int byteCount) { return os.readNoThrow(fd, bytes, byteOffset, byteCount); }
+
+    /**
+     * @hide
+     */
     @UnsupportedAppUsage
     public String readlink(String path) throws ErrnoException { return os.readlink(path); }
 
@@ -657,7 +662,13 @@ public class ForwardingOs implements Os {
     /**
      * @hide
      */
+    public int recvfromNoThrow(FileDescriptor fd, byte[] bytes, int byteOffset, int byteCount, int flags, InetSocketAddress srcAddress) { return os.recvfromNoThrow(fd, bytes, byteOffset, byteCount, flags, srcAddress); }
+
+    /**
+     * @hide
+     */
     public int recvmsg(FileDescriptor fd, StructMsghdr msg, int flags) throws ErrnoException, SocketException { return os.recvmsg(fd, msg, flags); }
+    public int recvmsgNoThrow(FileDescriptor fd, StructMsghdr msg, int flags) { return os.recvmsgNoThrow(fd, msg, flags); }
 
     /**
      * Deletes a name from the filesystem.
