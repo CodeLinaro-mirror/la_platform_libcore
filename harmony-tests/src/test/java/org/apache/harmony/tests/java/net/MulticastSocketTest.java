@@ -128,14 +128,14 @@ public class MulticastSocketTest {
 
                 // Pick the best interface for IPv6
                 int currentIPv6Level = getInterfaceLevel(hasIPv6, hasGlobalIPv6, hasAnyGlobal);
-                if (bestIPv6Interface == null || currentIPv6Level > bestIPv6Level) {
+                if (hasIPv6 && currentIPv6Level > bestIPv6Level) {
                     bestIPv6Interface = nextInterface;
                     bestIPv6Level = currentIPv6Level;
                 }
 
                 // Pick the best interface for IPv4
                 int currentIPv4Level = getInterfaceLevel(hasIPv4, hasGlobalIPv4, hasAnyGlobal);
-                if (bestIPv4Interface == null || currentIPv4Level > bestIPv4Level) {
+                if (hasIPv4 && currentIPv4Level > bestIPv4Level) {
                     bestIPv4Interface = nextInterface;
                     bestIPv4Level = currentIPv4Level;
                 }
